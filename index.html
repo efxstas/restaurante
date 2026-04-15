@@ -198,6 +198,25 @@
     .mono { font-family: 'DM Mono', monospace; }
     ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
 
+    /* RESTAURANT SELECTOR */
+    .selector-screen { min-height:100vh; background:var(--bg); display:flex; align-items:center; justify-content:center; padding:24px; flex-direction:column; gap:24px; }
+    .selector-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; width:100%; max-width:800px; }
+    .rest-card { background:var(--surface); border:2px solid var(--border); border-radius:var(--radius); padding:24px 20px; cursor:pointer; text-align:center; transition:all 0.15s; box-shadow:var(--shadow); }
+    .rest-card:hover { border-color:var(--amber); box-shadow:var(--shadow-md); transform:translateY(-2px); }
+    .rest-card .rc-icon { font-size:32px; margin-bottom:10px; }
+    .rest-card .rc-name { font-size:15px; font-weight:600; }
+    .rest-card .rc-grupo { font-size:12px; color:var(--text3); margin-top:4px; }
+    /* JEFE DASHBOARD */
+    .jefe-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; margin-bottom:24px; }
+    .jefe-rest-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
+    .jefe-rest-header { padding:16px 18px 12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+    .jefe-rest-body { padding:14px 18px; }
+    /* ADMIN PANEL */
+    .admin-section { margin-bottom:28px; }
+    .admin-section h3 { font-size:14px; font-weight:600; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+    .user-row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px; }
+    .user-row:last-child { border-bottom:none; }
+
     /* HAMBURGER */
     #hamburger { display:none; background:none; border:1px solid var(--border2); border-radius:var(--radius-sm); cursor:pointer; font-size:16px; padding:5px 10px; color:var(--text2); line-height:1; }
     #sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:9; }
@@ -284,6 +303,34 @@
   </div>
 </div>
 
+<!-- RESTAURANT SELECTOR -->
+<div id="restaurant-selector-screen" class="selector-screen" style="display:none">
+  <div style="text-align:center">
+    <div style="font-size:22px;font-weight:600;letter-spacing:-0.3px">Restaurant<span style="color:var(--amber)">OS</span></div>
+    <div style="font-size:13px;color:var(--text3);margin-top:4px">Selecciona el local al que quieres acceder</div>
+  </div>
+  <div id="selector-grid" class="selector-grid"></div>
+  <button class="btn sm danger" onclick="handleLogout()" style="margin-top:8px">Cerrar sesión</button>
+</div>
+
+<!-- NO RESTAURANT SCREEN -->
+<div id="no-restaurant-screen" class="selector-screen" style="display:none">
+  <div style="text-align:center;max-width:380px">
+    <div style="font-size:40px;margin-bottom:12px">🔐</div>
+    <div style="font-size:18px;font-weight:600;margin-bottom:8px">Sin restaurante asignado</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:20px;line-height:1.6">
+      Tu cuenta aún no está vinculada a ningún restaurante.<br>
+      Introduce el código de acceso que te facilitó el administrador.
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input id="join-code-input" type="text" placeholder="ID del restaurante (UUID)" style="flex:1;font-family:'DM Mono',monospace;font-size:12px">
+      <button class="btn primary" onclick="joinRestaurant()">Unirse</button>
+    </div>
+    <div id="join-msg" style="display:none;font-size:12px;padding:8px;border-radius:6px;"></div>
+    <button class="btn sm danger" onclick="handleLogout()" style="margin-top:16px">Cerrar sesión</button>
+  </div>
+</div>
+
 <!-- APP -->
 <div id="sidebar-overlay" onclick="closeSidebar()"></div>
 <div id="app-layout" class="layout" style="display:none">
@@ -301,8 +348,16 @@
       <div class="nav-item"        onclick="showPage('recetas')"   id="nav-recetas"><span class="icon">🍽</span> Recetas</div>
       <div class="nav-section" style="margin-top:8px">Entradas</div>
       <div class="nav-item"        onclick="showPage('albaranes')" id="nav-albaranes"><span class="icon">🧾</span> Albaranes</div>
+      <div class="nav-section" id="nav-section-admin" style="margin-top:8px;display:none">Sistema</div>
+      <div class="nav-item" onclick="showPage('jefe')"   id="nav-jefe"   style="display:none"><span class="icon">🏢</span> Mis locales</div>
+      <div class="nav-item" onclick="showPage('admin')"  id="nav-admin"  style="display:none"><span class="icon">⚙️</span> Panel Admin</div>
     </nav>
     <div class="sidebar-footer">
+      <div id="current-restaurant-display" style="margin-bottom:6px;padding:6px 8px;background:var(--surface2);border-radius:var(--radius-sm);display:none">
+        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:1px">Local activo</div>
+        <div id="current-restaurant-name" style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <button id="btn-switch-restaurant" onclick="switchRestaurant()" style="display:none;font-size:10px;color:var(--amber);background:none;border:none;cursor:pointer;padding:0;margin-top:2px">↩ Cambiar local</button>
+      </div>
       <div id="user-email" style="margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px"></div>
       <div id="user-role-badge" style="margin-bottom:8px;font-size:10px;color:var(--amber);font-weight:600;text-transform:uppercase;letter-spacing:0.05em"></div>
       <button class="btn sm danger" onclick="handleLogout()" style="width:100%;justify-content:center;">Cerrar sesión</button>
@@ -323,6 +378,8 @@
       <div id="page-stock"     class="page"></div>
       <div id="page-recetas"   class="page"></div>
       <div id="page-albaranes" class="page"></div>
+      <div id="page-jefe"      class="page"></div>
+      <div id="page-admin"     class="page"></div>
     </div>
   </div>
 </div>
@@ -337,13 +394,16 @@ const { createClient } = window.supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ─── STATE ────────────────────────────────────────────────────
-let currentUser = null;
+let currentUser       = null;
+let currentRestaurant = null;  // { id, nombre, grupoId, grupoNombre? }
+let userRestaurantes  = [];    // lista de restaurantes accesibles
 let state = { stock: [], recetas: [], ventas: [], albaranes: [] };
-let userRole = 'encargado'; // 'jefe' | 'encargado'
+let userRole = 'encargado'; // 'superadmin' | 'jefe' | 'admin' | 'encargado'
 let albaranProveedor = '';
 let albaranProveedorFilter = 'Todos';
-let proveedorCatMap = {}; // proveedor → categoría por defecto (guardado en localStorage)
+let proveedorCatMap = {};
 try { proveedorCatMap = JSON.parse(localStorage.getItem('prov_cat_map') || '{}'); } catch {}
+const ADMIN_SECRET = 'ros-admin-2024'; // debe coincidir con ADMIN_SECRET en Vercel env
 
 // ─── CATEGORÍAS ───────────────────────────────────────────────
 const CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
@@ -444,46 +504,83 @@ async function handleLogout() {
 }
 
 // ─── APP VISIBILITY ───────────────────────────────────────────
+function hideAllScreens() {
+  document.getElementById('loading-screen').style.display          = 'none';
+  document.getElementById('auth-screen').style.display             = 'none';
+  document.getElementById('restaurant-selector-screen').style.display = 'none';
+  document.getElementById('no-restaurant-screen').style.display    = 'none';
+  document.getElementById('app-layout').style.display              = 'none';
+}
+
 function showApp() {
-  document.getElementById('loading-screen').style.display = 'none';
-  document.getElementById('auth-screen').style.display   = 'none';
-  document.getElementById('app-layout').style.display    = 'flex';
-  document.getElementById('user-email').textContent = currentUser.email;
+  hideAllScreens();
+  document.getElementById('app-layout').style.display = 'flex';
+  document.getElementById('user-email').textContent   = currentUser.email;
 
-  userRole = currentUser.user_metadata?.role || 'encargado';
-
-  // Ocultar Resumen para encargados
-  const navResumen = document.getElementById('nav-resumen');
-  if (navResumen) navResumen.style.display = userRole === 'jefe' ? '' : 'none';
-
-  // Badge de rol en sidebar footer
+  // Badge de rol
+  const roleLabels = { superadmin:'★ Super Admin', jefe:'★ Jefe', admin:'Admin', encargado:'Encargado' };
   const roleBadge = document.getElementById('user-role-badge');
-  if (roleBadge) roleBadge.textContent = userRole === 'jefe' ? '★ Jefe' : 'Encargado';
+  if (roleBadge) roleBadge.textContent = roleLabels[userRole] || userRole;
 
-  showPage(userRole === 'jefe' ? 'resumen' : 'stock');
+  // Nav items por rol
+  const navResumen  = document.getElementById('nav-resumen');
+  const navJefe     = document.getElementById('nav-jefe');
+  const navAdmin    = document.getElementById('nav-admin');
+  const navSection  = document.getElementById('nav-section-admin');
+  if (navResumen) navResumen.style.display  = (userRole === 'admin' || userRole === 'superadmin') ? '' : 'none';
+  if (navJefe)    navJefe.style.display     = userRole === 'jefe' ? '' : 'none';
+  if (navAdmin)   navAdmin.style.display    = userRole === 'superadmin' ? '' : 'none';
+  if (navSection) navSection.style.display  = (userRole === 'jefe' || userRole === 'superadmin') ? '' : 'none';
+
+  // Restaurante activo en sidebar
+  const restDisplay = document.getElementById('current-restaurant-display');
+  const restName    = document.getElementById('current-restaurant-name');
+  const switchBtn   = document.getElementById('btn-switch-restaurant');
+  if (currentRestaurant && restDisplay) {
+    restDisplay.style.display = 'block';
+    if (restName) restName.textContent = currentRestaurant.nombre;
+    // Mostrar botón cambiar solo si tiene más de un restaurante disponible
+    if (switchBtn) switchBtn.style.display = userRestaurantes.length > 1 ? 'block' : 'none';
+  } else if (restDisplay) {
+    restDisplay.style.display = 'none';
+  }
 }
 
 function showAuthScreen() {
-  document.getElementById('loading-screen').style.display = 'none';
-  document.getElementById('auth-screen').style.display   = 'flex';
-  document.getElementById('app-layout').style.display    = 'none';
+  hideAllScreens();
+  document.getElementById('auth-screen').style.display = 'flex';
 }
 
 function showLoading() {
+  hideAllScreens();
   document.getElementById('loading-screen').style.display = 'flex';
-  document.getElementById('auth-screen').style.display   = 'none';
-  document.getElementById('app-layout').style.display    = 'none';
+}
+
+function showRestaurantSelectorScreen() {
+  hideAllScreens();
+  document.getElementById('restaurant-selector-screen').style.display = 'flex';
+  const grid = document.getElementById('selector-grid');
+  if (!grid) return;
+  grid.innerHTML = userRestaurantes.map(r => `
+    <div class="rest-card" onclick="selectRestaurant('${r.id}')">
+      <div class="rc-icon">🍽️</div>
+      <div class="rc-name">${r.nombre}</div>
+      ${r.grupoNombre ? `<div class="rc-grupo">${r.grupoNombre}</div>` : ''}
+    </div>`).join('');
+}
+
+function showNoRestaurantScreen() {
+  hideAllScreens();
+  document.getElementById('no-restaurant-screen').style.display = 'flex';
 }
 
 // ─── AUTH INIT ────────────────────────────────────────────────
 async function initAuth() {
-  // Comprobar sesión activa de forma inmediata y fiable
   try {
     const { data: { session } } = await sb.auth.getSession();
     if (session) {
       currentUser = session.user;
-      await loadStateFromSupabase();
-      showApp();
+      await routeAfterLogin();
     } else {
       showAuthScreen();
     }
@@ -491,29 +588,145 @@ async function initAuth() {
     showAuthScreen();
   }
 
-  // Escuchar cambios futuros (login / logout)
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && !document.getElementById('app-layout').style.display.includes('flex')) {
+    if (event === 'SIGNED_IN' && document.getElementById('auth-screen').style.display !== 'none') {
       currentUser = session.user;
       showLoading();
-      await loadStateFromSupabase();
-      showApp();
+      await routeAfterLogin();
     } else if (event === 'SIGNED_OUT') {
       currentUser = null;
+      currentRestaurant = null;
+      userRestaurantes = [];
       state = { stock: [], recetas: [], ventas: [], albaranes: [] };
       showAuthScreen();
     }
   });
 }
 
+// ─── ROUTING TRAS LOGIN ───────────────────────────────────────
+async function routeAfterLogin() {
+  userRole = currentUser.user_metadata?.role || 'encargado';
+
+  if (userRole === 'superadmin') {
+    currentRestaurant = null;
+    showApp();
+    showPage('admin');
+    return;
+  }
+
+  if (userRole === 'jefe') {
+    await loadJefeRestaurantes();
+    showApp();
+    showPage('jefe');
+    return;
+  }
+
+  // admin o encargado: cargar sus restaurantes
+  await loadUserRestaurantes();
+
+  if (userRestaurantes.length === 0) {
+    showNoRestaurantScreen();
+    return;
+  }
+
+  if (userRestaurantes.length === 1) {
+    await selectRestaurant(userRestaurantes[0].id, false);
+    return;
+  }
+
+  showRestaurantSelectorScreen();
+}
+
+async function loadUserRestaurantes() {
+  const { data } = await sb.from('restaurante_usuarios')
+    .select('rol, restaurante_id, grupo_id')
+    .eq('user_id', currentUser.id);
+  if (!data || data.length === 0) { userRestaurantes = []; return; }
+
+  const row = data[0];
+  userRole = row.rol || 'encargado';
+
+  if (row.rol === 'admin') {
+    // Admin: acceso a todos los restaurantes del grupo
+    const { data: rests } = await sb.from('restaurantes')
+      .select('id, nombre, grupo_id')
+      .eq('grupo_id', row.grupo_id);
+    const { data: grp } = await sb.from('grupos').select('nombre').eq('id', row.grupo_id).single();
+    userRestaurantes = (rests || []).map(r => ({
+      id: r.id, nombre: r.nombre, grupoId: r.grupo_id, grupoNombre: grp?.nombre || ''
+    }));
+  } else {
+    // Encargado: solo su restaurante asignado
+    if (!row.restaurante_id) { userRestaurantes = []; return; }
+    const { data: r } = await sb.from('restaurantes').select('id, nombre, grupo_id').eq('id', row.restaurante_id).single();
+    if (r) userRestaurantes = [{ id: r.id, nombre: r.nombre, grupoId: r.grupo_id }];
+  }
+}
+
+async function loadJefeRestaurantes() {
+  const { data: grupos } = await sb.from('grupos').select('id, nombre').eq('jefe_user_id', currentUser.id);
+  if (!grupos || grupos.length === 0) { userRestaurantes = []; return; }
+  const grupoIds = grupos.map(g => g.id);
+  const { data: rests } = await sb.from('restaurantes').select('id, nombre, grupo_id').in('grupo_id', grupoIds);
+  userRestaurantes = (rests || []).map(r => {
+    const g = grupos.find(x => x.id === r.grupo_id);
+    return { id: r.id, nombre: r.nombre, grupoId: r.grupo_id, grupoNombre: g?.nombre || '' };
+  });
+}
+
+async function selectRestaurant(restId, showSelector = true) {
+  currentRestaurant = userRestaurantes.find(r => r.id === restId) || { id: restId, nombre: 'Restaurante' };
+  showLoading();
+  await loadStateFromSupabase();
+  showApp();
+  showPage(userRole === 'admin' ? 'resumen' : 'stock');
+}
+
+function switchRestaurant() {
+  currentRestaurant = null;
+  state = { stock: [], recetas: [], ventas: [], albaranes: [] };
+  showRestaurantSelectorScreen();
+}
+
+async function joinRestaurant() {
+  const code = document.getElementById('join-code-input')?.value.trim();
+  const msg = document.getElementById('join-msg');
+  if (!code) return;
+
+  // Verificar que el restaurante existe
+  const { data: rest, error } = await sb.from('restaurantes').select('id, nombre, grupo_id').eq('id', code).single();
+  if (error || !rest) {
+    if (msg) { msg.textContent = 'Código no válido. Verifica el ID con tu administrador.'; msg.style.cssText = 'display:block;color:var(--red);background:var(--red-bg);border:1px solid var(--red-border)'; }
+    return;
+  }
+
+  // Insertar en restaurante_usuarios como encargado
+  const { error: insErr } = await sb.from('restaurante_usuarios').insert({
+    user_id: currentUser.id,
+    grupo_id: rest.grupo_id,
+    restaurante_id: rest.id,
+    rol: userRole || 'encargado',
+  });
+
+  if (insErr) {
+    if (msg) { msg.textContent = 'Error al unirse: ' + insErr.message; msg.style.cssText = 'display:block;color:var(--red);background:var(--red-bg);border:1px solid var(--red-border)'; }
+    return;
+  }
+
+  userRestaurantes = [{ id: rest.id, nombre: rest.nombre, grupoId: rest.grupo_id }];
+  await selectRestaurant(rest.id, false);
+}
+
 // ─── DB: CARGAR DATOS ─────────────────────────────────────────
 async function loadStateFromSupabase() {
+  if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [] }; return; }
+  const rid = currentRestaurant.id;
   const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes] = await Promise.all([
-    sb.from('stock').select('*'),
-    sb.from('recetas').select('*'),
+    sb.from('stock').select('*').eq('restaurante_id', rid),
+    sb.from('recetas').select('*').eq('restaurante_id', rid),
     sb.from('receta_ingredientes').select('*'),
-    sb.from('ventas').select('*').order('created_at', { ascending: true }),
-    sb.from('albaranes').select('*'),
+    sb.from('ventas').select('*').eq('restaurante_id', rid).order('created_at', { ascending: true }),
+    sb.from('albaranes').select('*').eq('restaurante_id', rid),
     sb.from('albaran_lineas').select('*'),
   ]);
 
@@ -553,7 +766,7 @@ async function loadStateFromSupabase() {
 // ─── DB: STOCK ────────────────────────────────────────────────
 async function dbSaveProducto(p) {
   await sb.from('stock').upsert({
-    id: p.id, user_id: currentUser.id,
+    id: p.id, restaurante_id: currentRestaurant.id,
     nombre: p.nombre, categoria: p.categoria,
     cantidad: p.cantidad, unidad: p.unidad,
     precio_und: p.precioUnd, minimo: p.minimo,
@@ -569,7 +782,7 @@ async function dbUpdateStockCantidad(id, cantidad) {
 // ─── DB: RECETAS ──────────────────────────────────────────────
 async function dbSaveReceta(r) {
   await sb.from('recetas').upsert({
-    id: r.id, user_id: currentUser.id,
+    id: r.id, restaurante_id: currentRestaurant.id,
     nombre: r.nombre, categoria: r.categoria, pvp: r.pvp,
   });
   await sb.from('receta_ingredientes').delete().eq('receta_id', r.id);
@@ -586,7 +799,7 @@ async function dbDeleteReceta(id) {
 // ─── DB: VENTAS ───────────────────────────────────────────────
 async function dbAddVenta(venta, stockUpdates) {
   await sb.from('ventas').insert({
-    id: venta.id, user_id: currentUser.id,
+    id: venta.id, restaurante_id: currentRestaurant.id,
     receta_id: venta.recetaId, unidades: venta.unidades,
   });
   if (stockUpdates.length > 0) {
@@ -604,18 +817,15 @@ async function dbDeleteVenta(id, stockRestores) {
   }
 }
 async function dbClearVentas() {
-  await sb.from('ventas').delete().eq('user_id', currentUser.id);
+  await sb.from('ventas').delete().eq('restaurante_id', currentRestaurant.id);
 }
 
 // ─── DB: ALBARANES ────────────────────────────────────────────
 async function dbSaveAlbaran(albaran, stockUpdates) {
-  let { error } = await sb.from('albaranes').insert({
-    id: albaran.id, user_id: currentUser.id, fecha: albaran.fecha, proveedor: albaran.proveedor || '',
+  await sb.from('albaranes').insert({
+    id: albaran.id, restaurante_id: currentRestaurant.id,
+    fecha: albaran.fecha, proveedor: albaran.proveedor || '',
   });
-  // Si la columna proveedor aún no existe en DB, reintenta sin ella
-  if (error) {
-    await sb.from('albaranes').insert({ id: albaran.id, user_id: currentUser.id, fecha: albaran.fecha });
-  }
   if (albaran.lineas.length > 0) {
     await sb.from('albaran_lineas').insert(
       albaran.lineas.map(l => ({
@@ -629,7 +839,7 @@ async function dbSaveAlbaran(albaran, stockUpdates) {
     await Promise.all(stockUpdates.map(u => {
       if (u.isNew) {
         return sb.from('stock').insert({
-          id: u.id, user_id: currentUser.id,
+          id: u.id, restaurante_id: currentRestaurant.id,
           nombre: u.nombre, categoria: u.categoria,
           cantidad: u.cantidad, unidad: u.unidad,
           precio_und: u.precioUnd, minimo: 0,
@@ -654,10 +864,13 @@ function closeSidebar() {
 }
 
 // ─── NAV ──────────────────────────────────────────────────────
-const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', albaranes:'Albaranes' };
+const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', albaranes:'Albaranes', jefe:'Mis Locales', admin:'Panel Admin' };
 
 function showPage(name) {
-  if (name === 'resumen' && userRole !== 'jefe') name = 'stock';
+  // Protección por rol
+  if (name === 'resumen' && userRole !== 'admin' && userRole !== 'superadmin') name = 'stock';
+  if (name === 'admin'   && userRole !== 'superadmin') name = 'stock';
+  if (name === 'jefe'    && userRole !== 'jefe')       name = 'stock';
   closeSidebar();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -669,6 +882,8 @@ function showPage(name) {
   if (name==='stock')     renderStock();
   if (name==='recetas')   renderRecetas();
   if (name==='albaranes') renderAlbaranes();
+  if (name==='jefe')      renderJefe();
+  if (name==='admin')     renderAdmin();
 }
 function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
 
@@ -1404,6 +1619,272 @@ async function limpiarHistorialAlbaranes() {
   renderAlbaranes();
   for(const id of ids){ await dbDeleteAlbaran(id); }
   await Promise.all(reverts.map(u=>sb.from('stock').update({cantidad:u.cantidad}).eq('id',u.id)));
+}
+
+// ─── JEFE DASHBOARD ───────────────────────────────────────────
+async function renderJefe() {
+  const pg = document.getElementById('page-jefe');
+  pg.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
+
+  // Cargar stats de cada restaurante
+  if (userRestaurantes.length === 0) {
+    pg.innerHTML = `
+      <div class="empty-state"><div class="emoji">🏢</div>
+        No tienes restaurantes creados todavía.<br>
+        <span style="font-size:12px;color:var(--text3)">El super admin debe crear tu grupo y locales.</span>
+      </div>`;
+    return;
+  }
+
+  const statsPromises = userRestaurantes.map(async r => {
+    const [{ data: stk }, { data: vts }, { data: rec }] = await Promise.all([
+      sb.from('stock').select('cantidad, precio_und').eq('restaurante_id', r.id),
+      sb.from('ventas').select('unidades, receta_id').eq('restaurante_id', r.id),
+      sb.from('recetas').select('id, pvp').eq('restaurante_id', r.id),
+    ]);
+    const valorStock = (stk || []).reduce((s, p) => s + p.cantidad * p.precio_und, 0);
+    const totalVentas = (vts || []).reduce((s, v) => {
+      const r2 = (rec || []).find(x => x.id === v.receta_id);
+      return s + (r2 ? r2.pvp * v.unidades : 0);
+    }, 0);
+    return { ...r, valorStock, totalVentas, productos: (stk || []).length };
+  });
+
+  const stats = await Promise.all(statsPromises);
+
+  // Agrupar por grupo
+  const grupos = {};
+  stats.forEach(r => {
+    const gk = r.grupoNombre || r.grupoId;
+    if (!grupos[gk]) grupos[gk] = [];
+    grupos[gk].push(r);
+  });
+
+  pg.innerHTML = Object.entries(grupos).map(([grupoNombre, rests]) => `
+    <div class="admin-section">
+      <h3>🏢 ${grupoNombre}</h3>
+      <div class="jefe-grid">
+        ${rests.map(r => `
+        <div class="jefe-rest-card">
+          <div class="jefe-rest-header">
+            <div>
+              <div style="font-size:15px;font-weight:600">${r.nombre}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">${r.productos} productos en stock</div>
+            </div>
+            <button class="btn sm primary" onclick="entrarRestauranteComoJefe('${r.id}')">Entrar →</button>
+          </div>
+          <div class="jefe-rest-body">
+            <div style="display:flex;gap:20px">
+              <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Valor stock</div><div style="font-size:18px;font-weight:600;color:var(--amber)">${fmt(r.valorStock)}</div></div>
+              <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Ventas totales</div><div style="font-size:18px;font-weight:600;color:var(--teal)">${fmt(r.totalVentas)}</div></div>
+            </div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+async function entrarRestauranteComoJefe(restId) {
+  currentRestaurant = userRestaurantes.find(r => r.id === restId) || { id: restId, nombre: '' };
+  showLoading();
+  await loadStateFromSupabase();
+  showApp();
+  showPage('resumen');
+}
+
+// ─── SUPERADMIN PANEL ─────────────────────────────────────────
+let adminGrupos = [], adminRests = [];
+
+async function renderAdmin() {
+  const pg = document.getElementById('page-admin');
+  pg.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
+  await loadAdminData();
+
+  pg.innerHTML = `
+    <!-- GRUPOS -->
+    <div class="admin-section">
+      <h3>Grupos (Jefes)</h3>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-body">
+          <div class="form-row cols3" style="align-items:flex-end">
+            <div class="form-group" style="margin:0"><label>Nombre del grupo</label><input id="adm-grupo-nombre" type="text" placeholder="Ej: Restaurantes García"></div>
+            <div class="form-group" style="margin:0"><label>Email del jefe</label><input id="adm-grupo-jefe" type="email" placeholder="jefe@restaurante.com"></div>
+            <button class="btn primary" onclick="adminCrearGrupo()">+ Crear grupo</button>
+          </div>
+          <div id="adm-grupo-msg" style="display:none;margin-top:10px;font-size:12px;padding:8px;border-radius:6px"></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-body no-pad">
+        ${adminGrupos.length === 0 ? '<div class="empty-state" style="padding:20px">Sin grupos</div>' : `
+        <table><thead><tr><th>Grupo</th><th>Jefe (email)</th><th>Locales</th><th>ID</th></tr></thead>
+        <tbody>${adminGrupos.map(g => {
+          const rests = adminRests.filter(r => r.grupo_id === g.id);
+          return `<tr>
+            <td style="font-weight:600">${g.nombre}</td>
+            <td style="font-size:12px;color:var(--text2)">${g.jefe_email || '—'}</td>
+            <td style="color:var(--text2)">${rests.map(r => r.nombre).join(', ') || '—'}</td>
+            <td><span class="mono" style="font-size:10px;color:var(--text3)">${g.id.slice(0,8)}…</span></td>
+          </tr>`;
+        }).join('')}</tbody></table>`}
+      </div></div>
+    </div>
+
+    <!-- RESTAURANTES -->
+    <div class="admin-section">
+      <h3>Restaurantes (Locales)</h3>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-body">
+          <div class="form-row cols3" style="align-items:flex-end">
+            <div class="form-group" style="margin:0"><label>Nombre del local</label><input id="adm-rest-nombre" type="text" placeholder="Ej: Local Centro"></div>
+            <div class="form-group" style="margin:0"><label>Grupo al que pertenece</label>
+              <select id="adm-rest-grupo">${adminGrupos.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('')}</select>
+            </div>
+            <button class="btn primary" onclick="adminCrearRestaurante()">+ Crear local</button>
+          </div>
+          <div id="adm-rest-msg" style="display:none;margin-top:10px;font-size:12px;padding:8px;border-radius:6px"></div>
+        </div>
+      </div>
+      <div class="card"><div class="card-body no-pad">
+        ${adminRests.length === 0 ? '<div class="empty-state" style="padding:20px">Sin locales</div>' : `
+        <table><thead><tr><th>Local</th><th>Grupo</th><th>ID (código de acceso)</th></tr></thead>
+        <tbody>${adminRests.map(r => {
+          const g = adminGrupos.find(x => x.id === r.grupo_id);
+          return `<tr>
+            <td style="font-weight:600">${r.nombre}</td>
+            <td><span class="cat-badge">${g?.nombre || '—'}</span></td>
+            <td>
+              <span class="mono" style="font-size:11px;background:var(--surface2);padding:3px 8px;border-radius:4px;border:1px solid var(--border)">${r.id}</span>
+              <button class="btn sm" style="margin-left:6px" onclick="navigator.clipboard.writeText('${r.id}').then(()=>alert('ID copiado'))">Copiar</button>
+            </td>
+          </tr>`;
+        }).join('')}</tbody></table>`}
+      </div></div>
+    </div>
+
+    <!-- CREAR USUARIO -->
+    <div class="admin-section">
+      <h3>Crear usuario</h3>
+      <div class="card"><div class="card-body">
+        <div class="form-row cols2">
+          <div class="form-group"><label>Email</label><input id="adm-usr-email" type="email" placeholder="usuario@restaurante.com"></div>
+          <div class="form-group"><label>Contraseña temporal</label><input id="adm-usr-pass" type="text" placeholder="Min. 6 caracteres"></div>
+        </div>
+        <div class="form-row cols3">
+          <div class="form-group"><label>Rol</label>
+            <select id="adm-usr-rol" onchange="onAdminRolChange()">
+              <option value="encargado">Encargado</option>
+              <option value="admin">Admin (todos los locales del grupo)</option>
+              <option value="jefe">Jefe</option>
+            </select>
+          </div>
+          <div class="form-group" id="adm-usr-grupo-grp"><label>Grupo</label>
+            <select id="adm-usr-grupo" onchange="onAdminGrupoChange()">${adminGrupos.map(g => `<option value="${g.id}">${g.nombre}</option>`).join('')}</select>
+          </div>
+          <div class="form-group" id="adm-usr-rest-grp"><label>Local (solo encargado)</label>
+            <select id="adm-usr-rest">${adminRests.map(r => `<option value="${r.id}">${r.nombre}</option>`).join('')}</select>
+          </div>
+        </div>
+        <div id="adm-usr-msg" style="display:none;margin-bottom:12px;font-size:12px;padding:8px;border-radius:6px"></div>
+        <button class="btn primary" onclick="adminCrearUsuario()">Crear usuario</button>
+      </div></div>
+    </div>
+  `;
+}
+
+async function loadAdminData() {
+  const [{ data: grupos }, { data: rests }] = await Promise.all([
+    sb.from('grupos').select('*'),
+    sb.from('restaurantes').select('*'),
+  ]);
+  adminGrupos = grupos || [];
+  adminRests  = rests  || [];
+
+  // Enriquecer grupos con email del jefe si existe en restaurante_usuarios
+  // (No tenemos acceso a auth.users desde el cliente, mostramos user_id)
+}
+
+function onAdminRolChange() {
+  const rol = document.getElementById('adm-usr-rol')?.value;
+  const grupoGrp = document.getElementById('adm-usr-grupo-grp');
+  const restGrp  = document.getElementById('adm-usr-rest-grp');
+  if (grupoGrp) grupoGrp.style.display = rol === 'jefe' ? 'none' : 'block';
+  if (restGrp)  restGrp.style.display  = rol === 'encargado' ? 'block' : 'none';
+}
+
+function onAdminGrupoChange() {
+  const grupoId = document.getElementById('adm-usr-grupo')?.value;
+  const restSel = document.getElementById('adm-usr-rest');
+  if (!restSel) return;
+  const filtered = adminRests.filter(r => r.grupo_id === grupoId);
+  restSel.innerHTML = filtered.map(r => `<option value="${r.id}">${r.nombre}</option>`).join('');
+}
+
+async function adminCrearGrupo() {
+  const nombre = document.getElementById('adm-grupo-nombre')?.value.trim();
+  const msg = document.getElementById('adm-grupo-msg');
+  if (!nombre) { showAdminMsg(msg, 'Introduce el nombre del grupo', true); return; }
+
+  // El jefe se asignará al grupo cuando se cree su usuario
+  // Por ahora usamos el propio superadmin como placeholder de jefe_user_id
+  const { data, error } = await sb.from('grupos').insert({ nombre, jefe_user_id: currentUser.id }).select().single();
+  if (error) { showAdminMsg(msg, 'Error: ' + error.message, true); return; }
+  showAdminMsg(msg, `✓ Grupo "${nombre}" creado`, false);
+  document.getElementById('adm-grupo-nombre').value = '';
+  await loadAdminData();
+  renderAdmin();
+}
+
+async function adminCrearRestaurante() {
+  const nombre  = document.getElementById('adm-rest-nombre')?.value.trim();
+  const grupoId = document.getElementById('adm-rest-grupo')?.value;
+  const msg = document.getElementById('adm-rest-msg');
+  if (!nombre || !grupoId) { showAdminMsg(msg, 'Rellena todos los campos', true); return; }
+
+  const { error } = await sb.from('restaurantes').insert({ nombre, grupo_id: grupoId });
+  if (error) { showAdminMsg(msg, 'Error: ' + error.message, true); return; }
+  showAdminMsg(msg, `✓ Local "${nombre}" creado`, false);
+  document.getElementById('adm-rest-nombre').value = '';
+  await loadAdminData();
+  renderAdmin();
+}
+
+async function adminCrearUsuario() {
+  const email   = document.getElementById('adm-usr-email')?.value.trim();
+  const pass    = document.getElementById('adm-usr-pass')?.value.trim();
+  const rol     = document.getElementById('adm-usr-rol')?.value;
+  const grupoId = document.getElementById('adm-usr-grupo')?.value;
+  const restId  = document.getElementById('adm-usr-rest')?.value;
+  const msg     = document.getElementById('adm-usr-msg');
+  if (!email || !pass) { showAdminMsg(msg, 'Email y contraseña son obligatorios', true); return; }
+
+  showAdminMsg(msg, 'Creando usuario…', false);
+  const btn = document.querySelector('[onclick="adminCrearUsuario()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creando…'; }
+
+  try {
+    const res = await fetch('/api/admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminSecret: ADMIN_SECRET, action: 'create_user', email, password: pass, role: rol, grupoId, restauranteId: restId }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Error desconocido');
+    showAdminMsg(msg, `✓ Usuario "${email}" creado con rol ${rol}`, false);
+    document.getElementById('adm-usr-email').value = '';
+    document.getElementById('adm-usr-pass').value  = '';
+  } catch (err) {
+    showAdminMsg(msg, 'Error: ' + err.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Crear usuario'; }
+  }
+}
+
+function showAdminMsg(el, text, isError) {
+  if (!el) return;
+  el.textContent = text;
+  el.style.cssText = isError
+    ? 'display:block;color:var(--red);background:var(--red-bg);border:1px solid var(--red-border)'
+    : 'display:block;color:var(--teal);background:var(--teal-bg);border:1px solid var(--teal-border)';
 }
 
 // ─── INIT ─────────────────────────────────────────────────────
