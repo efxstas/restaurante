@@ -277,10 +277,6 @@
       <div class="tagline">Control de cocina · v0.1</div>
     </div>
     <div class="auth-card">
-      <div class="auth-tabs">
-        <div id="tab-login"    class="auth-tab active"  onclick="setAuthTab('login')">Entrar</div>
-        <div id="tab-register" class="auth-tab"         onclick="setAuthTab('register')">Registrarse</div>
-      </div>
       <div class="form-group">
         <label>Email</label>
         <input type="email" id="auth-email" placeholder="tu@restaurante.com" autocomplete="email">
@@ -288,17 +284,10 @@
       <div class="form-group">
         <label>Contraseña</label>
         <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password"
-          onkeydown="if(event.key==='Enter')authAction()">
-      </div>
-      <div id="auth-role-group" class="form-group" style="display:none">
-        <label>Tipo de cuenta</label>
-        <select id="auth-role">
-          <option value="encargado">Encargado / Empleado</option>
-          <option value="jefe">Jefe del restaurante</option>
-        </select>
+          onkeydown="if(event.key==='Enter')handleLogin()">
       </div>
       <div id="auth-msg" style="display:none;font-size:12px;padding:8px 12px;border-radius:var(--radius-sm);margin-bottom:12px;border:1px solid;line-height:1.5;"></div>
-      <button id="auth-btn" class="btn primary" style="width:100%;justify-content:center;" onclick="authAction()">Entrar</button>
+      <button id="auth-btn" class="btn primary" style="width:100%;justify-content:center;" onclick="handleLogin()">Entrar</button>
     </div>
   </div>
 </div>
@@ -446,27 +435,14 @@ function margenClass(mg) { return mg >= 60 ? 'high' : mg >= 40 ? 'mid' : 'low'; 
 function margenColor(mg) { return mg >= 60 ? 'var(--teal)' : mg >= 40 ? 'var(--amber)' : 'var(--red)'; }
 
 // ─── AUTH UI ──────────────────────────────────────────────────
-let authMode = 'login';
-
-function setAuthTab(mode) {
-  authMode = mode;
-  document.getElementById('tab-login').classList.toggle('active', mode === 'login');
-  document.getElementById('tab-register').classList.toggle('active', mode === 'register');
-  document.getElementById('auth-btn').textContent = mode === 'login' ? 'Entrar' : 'Registrarse';
-  document.getElementById('auth-msg').style.display = 'none';
-  document.getElementById('auth-role-group').style.display = mode === 'register' ? 'block' : 'none';
-}
-
 function showAuthMsg(text, isError = true) {
   const el = document.getElementById('auth-msg');
   el.textContent = text;
-  el.style.color      = isError ? 'var(--red)'  : 'var(--teal)';
-  el.style.background = isError ? 'var(--red-bg)' : 'var(--teal-bg)';
+  el.style.color       = isError ? 'var(--red)'    : 'var(--teal)';
+  el.style.background  = isError ? 'var(--red-bg)' : 'var(--teal-bg)';
   el.style.borderColor = isError ? 'var(--red-border)' : 'var(--teal-border)';
   el.style.display = 'block';
 }
-
-function authAction() { authMode === 'login' ? handleLogin() : handleRegister(); }
 
 async function handleLogin() {
   const email    = document.getElementById('auth-email').value.trim();
@@ -478,24 +454,6 @@ async function handleLogin() {
   if (error) {
     showAuthMsg(error.message === 'Invalid login credentials' ? 'Email o contraseña incorrectos' : error.message);
     btn.disabled = false; btn.textContent = 'Entrar';
-  }
-}
-
-async function handleRegister() {
-  const email    = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
-  if (!email || !password) { showAuthMsg('Introduce email y contraseña'); return; }
-  if (password.length < 6) { showAuthMsg('La contraseña debe tener al menos 6 caracteres'); return; }
-  const btn = document.getElementById('auth-btn');
-  btn.disabled = true; btn.textContent = 'Registrando…';
-  const role = document.getElementById('auth-role')?.value || 'encargado';
-  const { error } = await sb.auth.signUp({ email, password, options: { data: { role } } });
-  if (error) {
-    showAuthMsg(error.message);
-    btn.disabled = false; btn.textContent = 'Registrarse';
-  } else {
-    showAuthMsg('Cuenta creada. Si no entras automáticamente, confirma tu email.', false);
-    btn.disabled = false; btn.textContent = 'Registrarse';
   }
 }
 
