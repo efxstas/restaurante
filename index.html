@@ -197,6 +197,49 @@
     .empty-state .emoji { font-size: 32px; margin-bottom: 10px; }
     .mono { font-family: 'DM Mono', monospace; }
     ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
+
+    /* HAMBURGER */
+    #hamburger { display:none; background:none; border:1px solid var(--border2); border-radius:var(--radius-sm); cursor:pointer; font-size:16px; padding:5px 10px; color:var(--text2); line-height:1; }
+    #sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:9; }
+    #sidebar-overlay.open { display:block; }
+
+    /* RESPONSIVE */
+    @media (max-width: 768px) {
+      #hamburger { display:block; }
+      .sidebar { transform:translateX(-220px); transition:transform 0.25s ease; }
+      .sidebar.open { transform:translateX(0); }
+      .main { margin-left:0; }
+      .content { padding:16px; }
+      .topbar { padding:0 14px; gap:8px; }
+      .topbar h1 { font-size:15px; }
+      .metrics-grid { grid-template-columns:1fr 1fr; }
+      .metrics-grid.cols3 { grid-template-columns:1fr 1fr; }
+      .metric-card .m-value { font-size:22px; }
+      .card-body.no-pad { overflow-x:auto; }
+      .card-header { padding:12px 16px; }
+      .card-body { padding:14px; }
+      .form-row.cols2 { grid-template-columns:1fr; }
+      .form-row.cols3 { grid-template-columns:1fr 1fr; }
+      .ingr-add-row { grid-template-columns:1fr 72px auto; gap:6px; }
+      .recipes-grid { grid-template-columns:1fr; }
+      .sell-panel { padding:14px; }
+      .sell-row { flex-direction:column; }
+      .sell-row .fg, .sell-row > div { width:100% !important; }
+      .sell-row .btn { width:100%; justify-content:center; }
+      .albaran-grid-2col { grid-template-columns:1fr !important; }
+      .modal { max-width:100% !important; max-height:95vh; margin:0; border-radius:var(--radius) var(--radius) 0 0; }
+      .modal-overlay { align-items:flex-end; padding:0; }
+      .modal-body { padding:16px; }
+      .modal-header { padding:14px 16px; }
+      .modal-footer { padding:12px 16px; }
+    }
+    @media (max-width: 480px) {
+      .metrics-grid { grid-template-columns:1fr; }
+      .metrics-grid.cols3 { grid-template-columns:1fr; }
+      .form-row.cols3 { grid-template-columns:1fr; }
+      .content { padding:12px; }
+      .topbar { height:50px; }
+    }
   </style>
 </head>
 <body>
@@ -235,6 +278,7 @@
 </div>
 
 <!-- APP -->
+<div id="sidebar-overlay" onclick="closeSidebar()"></div>
 <div id="app-layout" class="layout" style="display:none">
 
   <!-- SIDEBAR -->
@@ -260,7 +304,10 @@
   <!-- MAIN -->
   <div class="main">
     <div class="topbar">
-      <h1 id="topbar-title">Resumen</h1>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="hamburger" onclick="toggleSidebar()">☰</button>
+        <h1 id="topbar-title">Resumen</h1>
+      </div>
       <div class="actions" id="topbar-actions"></div>
     </div>
     <div class="content">
@@ -543,10 +590,21 @@ async function dbDeleteAlbaran(id) {
   await sb.from('albaranes').delete().eq('id', id);
 }
 
+// ─── SIDEBAR MOBILE ───────────────────────────────────────────
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.querySelector('.sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
+}
+
 // ─── NAV ──────────────────────────────────────────────────────
 const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', albaranes:'Albaranes' };
 
 function showPage(name) {
+  closeSidebar();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
@@ -1034,7 +1092,7 @@ function renderAlbaranes() {
       También puedes añadirlas a mano si prefieres.
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:20px;align-items:start">
+    <div class="albaran-grid-2col" style="display:grid;grid-template-columns:1fr 1.4fr;gap:20px;align-items:start">
       <div>
         <div class="card">
           <div class="card-header"><h2>Foto del albarán</h2></div>
