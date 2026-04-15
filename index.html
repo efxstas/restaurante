@@ -20,6 +20,17 @@
       --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
       --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
     }
+    body.dark {
+      --bg: #18160F; --surface: #201E16; --surface2: #2A271E;
+      --border: #38352A; --border2: #4A4638;
+      --text: #EDE9DF; --text2: #A09880; --text3: #6B6550;
+      --amber-bg: #2A2010; --amber-border: #6B4E1A;
+      --teal-bg: #0F2420; --teal-border: #1A5045;
+      --red-bg: #2A1010; --red-border: #6B2020;
+      --blue-bg: #101828; --blue-border: #1A3A6B;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.2);
+    }
     body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; min-height: 100vh; }
     .layout { display: flex; min-height: 100vh; }
 
@@ -362,6 +373,7 @@
         <h1 id="topbar-title">Resumen</h1>
       </div>
       <div class="actions" id="topbar-actions"></div>
+      <button id="dark-toggle" onclick="toggleDark()" title="Modo oscuro" style="background:none;border:1px solid var(--border2);border-radius:var(--radius-sm);cursor:pointer;padding:5px 10px;font-size:16px;color:var(--text2);line-height:1">🌙</button>
     </div>
     <div class="content">
       <div id="page-resumen"   class="page active"></div>
@@ -392,6 +404,10 @@ let state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [] 
 let userRole = 'encargado'; // 'superadmin' | 'jefe' | 'admin' | 'encargado'
 let albaranProveedor = '';
 let albaranProveedorFilter = 'Todos';
+let albaranPeriodo = 'todos';   // 'todos' | 'semana' | 'mes' | 'custom'
+let albaranFechaDesde = '';
+let albaranFechaHasta = '';
+let albaranSortDir = 'desc';    // 'desc' = más reciente primero
 let proveedorCatMap = {};
 try { proveedorCatMap = JSON.parse(localStorage.getItem('prov_cat_map') || '{}'); } catch {}
 const ADMIN_SECRET = 'ros-admin-2024';
@@ -1147,7 +1163,7 @@ function renderStock() {
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
           ${getCategorias().map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px">
             ${c}
-            <button onclick="eliminarCategoria('${c.replace(/'/g,"\\'")}'')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;line-height:1;padding:0 2px" title="Eliminar">✕</button>
+            <button onclick="eliminarCategoria('${c.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;line-height:1;padding:0 2px" title="Eliminar">✕</button>
           </span>`).join('')}
         </div>
         <div style="display:flex;gap:8px;max-width:400px">
@@ -1554,26 +1570,82 @@ function renderAlbaranes() {
 
     ${state.albaranes.length>0 ? (()=>{
       const provs=[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))];
-      const filtrados=albaranProveedorFilter==='Todos'?state.albaranes:state.albaranes.filter(a=>a.proveedor===albaranProveedorFilter);
+
+      // Filtro por período
+      const now = new Date();
+      const parseDate = s => { const [d,m,y]=s.split('/'); return new Date(y,m-1,d); };
+      let filtrados = state.albaranes.filter(a => {
+        if(albaranProveedorFilter!=='Todos' && a.proveedor!==albaranProveedorFilter) return false;
+        try {
+          const d = parseDate(a.fecha);
+          if(albaranPeriodo==='semana'){
+            const lun=new Date(now); lun.setDate(now.getDate()-now.getDay()+1); lun.setHours(0,0,0,0);
+            return d>=lun;
+          }
+          if(albaranPeriodo==='mes'){
+            return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+          }
+          if(albaranPeriodo==='custom'&&albaranFechaDesde&&albaranFechaHasta){
+            const desde=new Date(albaranFechaDesde), hasta=new Date(albaranFechaHasta); hasta.setHours(23,59,59);
+            return d>=desde&&d<=hasta;
+          }
+        } catch{}
+        return true;
+      });
+
+      // Ordenar cronológicamente
+      filtrados = [...filtrados].sort((a,b)=>{
+        try{
+          const da=parseDate(a.fecha), db=parseDate(b.fecha);
+          return albaranSortDir==='desc'?db-da:da-db;
+        } catch{return 0;}
+      });
+
+      const totalGastado=filtrados.reduce((s,a)=>s+a.lineas.reduce((ss,l)=>ss+l.cantidad*l.precioUnd,0),0);
+
       return `
-    <div class="card">
+    <div class="card" style="margin-bottom:16px">
       <div class="card-header" style="flex-wrap:wrap;gap:8px">
         <h2>Historial de albaranes</h2>
-        ${provs.length>0?`<div class="filter-tabs" style="flex:1">
-          <div class="filter-tab ${albaranProveedorFilter==='Todos'?'active':''}" onclick="setAlbaranFilter('Todos')">Todos</div>
-          ${provs.map(p=>`<div class="filter-tab ${albaranProveedorFilter===p?'active':''}" onclick="setAlbaranFilter('${p}')">${p}</div>`).join('')}
-        </div>`:''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1">
+          <div class="filter-tabs">
+            <div class="filter-tab ${albaranPeriodo==='todos'?'active':''}" onclick="setAlbaranPeriodo('todos')">Todos</div>
+            <div class="filter-tab ${albaranPeriodo==='semana'?'active':''}" onclick="setAlbaranPeriodo('semana')">Esta semana</div>
+            <div class="filter-tab ${albaranPeriodo==='mes'?'active':''}" onclick="setAlbaranPeriodo('mes')">Este mes</div>
+            <div class="filter-tab ${albaranPeriodo==='custom'?'active':''}" onclick="setAlbaranPeriodo('custom')">Período</div>
+          </div>
+          ${albaranPeriodo==='custom'?`<div style="display:flex;gap:6px;align-items:center;font-size:12px">
+            <input type="date" value="${albaranFechaDesde}" onchange="albaranFechaDesde=this.value;renderAlbaranes()" style="padding:4px 8px;font-size:12px">
+            <span style="color:var(--text3)">—</span>
+            <input type="date" value="${albaranFechaHasta}" onchange="albaranFechaHasta=this.value;renderAlbaranes()" style="padding:4px 8px;font-size:12px">
+          </div>`:''}
+          ${provs.length>0?`<select onchange="setAlbaranFilter(this.value)" style="font-size:12px;padding:5px 8px">
+            <option value="Todos" ${albaranProveedorFilter==='Todos'?'selected':''}>Todos proveedores</option>
+            ${provs.map(p=>`<option value="${p}" ${albaranProveedorFilter===p?'selected':''}>${p}</option>`).join('')}
+          </select>`:''}
+          <button class="btn sm" onclick="albaranSortDir=albaranSortDir==='desc'?'asc':'desc';renderAlbaranes()" title="Cambiar orden">
+            ${albaranSortDir==='desc'?'↓ Más reciente':'↑ Más antiguo'}
+          </button>
+        </div>
         <button class="btn sm danger" onclick="limpiarHistorialAlbaranes()">Borrar todo</button>
+      </div>
+      <div class="card-body" style="padding:12px 20px;background:var(--surface2);border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+          <div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Albaranes</span><br><strong style="font-size:18px">${filtrados.length}</strong></div>
+          <div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Total gastado</span><br><strong style="font-size:18px;color:var(--amber)">${fmt(totalGastado)}</strong></div>
+          <div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Productos recibidos</span><br><strong style="font-size:18px">${filtrados.reduce((s,a)=>s+a.lineas.length,0)}</strong></div>
+        </div>
       </div>
       <div class="card-body no-pad">
         <table>
-          <thead><tr><th>Fecha</th><th>Proveedor</th><th>Productos</th><th>Valor total</th><th></th></tr></thead>
-          <tbody>${[...filtrados].reverse().map(a=>`
+          <thead><tr><th>Fecha</th><th>Proveedor</th><th>Productos</th><th>Total</th><th></th></tr></thead>
+          <tbody>${filtrados.length===0?`<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin albaranes en este período</td></tr>`:
+            filtrados.map(a=>`
             <tr>
-              <td>${a.fecha}</td>
+              <td style="white-space:nowrap">${a.fecha}</td>
               <td>${a.proveedor?`<span class="cat-badge">${a.proveedor}</span>`:''}</td>
-              <td style="color:var(--text2);font-size:12px">${a.lineas.map(l=>l.nombre).join(', ')}</td>
-              <td class="mono">${fmt(a.lineas.reduce((s,l)=>s+l.cantidad*l.precioUnd,0))}</td>
+              <td style="color:var(--text2);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.lineas.map(l=>l.nombre).join(', ')}</td>
+              <td class="mono" style="font-weight:600">${fmt(a.lineas.reduce((s,l)=>s+l.cantidad*l.precioUnd,0))}</td>
               <td><button class="btn sm danger" onclick="eliminarAlbaran(${JSON.stringify(a.id)})">Eliminar</button></td>
             </tr>`).join('')}
           </tbody>
@@ -1743,6 +1815,11 @@ function onProveedorCatChange() {
   }
 }
 function setAlbaranFilter(prov) { albaranProveedorFilter = prov; renderAlbaranes(); }
+function setAlbaranPeriodo(p) {
+  albaranPeriodo = p;
+  if(p==='custom'){ const hoy=new Date().toISOString().slice(0,10); albaranFechaDesde=albaranFechaDesde||hoy; albaranFechaHasta=albaranFechaHasta||hoy; }
+  renderAlbaranes();
+}
 
 async function limpiarHistorialAlbaranes() {
   if (!confirm('¿Borrar TODO el historial de albaranes?\n\nSe restarán del stock todas las cantidades añadidas. Esta acción no se puede deshacer.')) return;
@@ -2026,6 +2103,21 @@ function showAdminMsg(el, text, isError) {
     ? 'display:block;color:var(--red);background:var(--red-bg);border:1px solid var(--red-border)'
     : 'display:block;color:var(--teal);background:var(--teal-bg);border:1px solid var(--teal-border)';
 }
+
+// ─── DARK MODE ───────────────────────────────────────────────
+function toggleDark() {
+  const isDark = document.body.classList.toggle('dark');
+  localStorage.setItem('dark', isDark ? '1' : '');
+  const btn = document.getElementById('dark-toggle');
+  if(btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+(function initDark(){
+  if(localStorage.getItem('dark')==='1'){
+    document.body.classList.add('dark');
+    const btn=document.getElementById('dark-toggle');
+    if(btn) btn.textContent='☀️';
+  }
+})();
 
 // ─── INIT ─────────────────────────────────────────────────────
 initAuth();
