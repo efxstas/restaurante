@@ -455,16 +455,23 @@ function showLoading() {
 
 // ─── AUTH INIT ────────────────────────────────────────────────
 async function initAuth() {
+  // Comprobar sesión activa de forma inmediata y fiable
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) {
+      currentUser = session.user;
+      await loadStateFromSupabase();
+      showApp();
+    } else {
+      showAuthScreen();
+    }
+  } catch {
+    showAuthScreen();
+  }
+
+  // Escuchar cambios futuros (login / logout)
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'INITIAL_SESSION') {
-      if (session) {
-        currentUser = session.user;
-        await loadStateFromSupabase();
-        showApp();
-      } else {
-        showAuthScreen();
-      }
-    } else if (event === 'SIGNED_IN') {
+    if (event === 'SIGNED_IN' && !document.getElementById('app-layout').style.display.includes('flex')) {
       currentUser = session.user;
       showLoading();
       await loadStateFromSupabase();
