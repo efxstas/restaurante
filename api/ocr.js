@@ -44,9 +44,11 @@ export default async function handler(req, res) {
               text: `Analiza este albarán de proveedor y extrae cada producto listado.
 Por cada línea de producto devuelve:
 - nombre: nombre del producto
-- cantidad: número total (si hay multiplicación como "4kg x 3" o "3 × 5 kg", calcula el total: 12 o 15)
-- unidad: unidad de medida (usa solo: kg, g, l, ml, ud, cl, lata, bote)
-- precio_und: precio por unidad en euros (0 si no aparece)
+- cantidad: número total en la unidad base del producto. Lee el texto del producto con atención:
+  si describe una multiplicación (ej: "4 ud x 3 kg", "3 cajas de 5kg", "2 × 6 l"), calcula el total (12 kg, 15 kg, 12 l).
+  Si no hay multiplicación, usa el número de la columna de cantidad directamente.
+- unidad: unidad de medida del total calculado (usa solo: kg, g, l, ml, ud, cl, lata, bote)
+- precio_und: precio por unidad CON IVA. Cálculo: coge el valor de la columna "Importe" o "Total" (ese valor ya incluye IVA, no toques nada) y divídelo entre la cantidad total que has calculado. Si no aparece importe, devuelve 0.
 - categoria: clasifica el producto en UNA de estas categorías exactas: "Carnes a la brasa", "Comida italiana", "Bebidas", "Otros"
   (Carnes a la brasa = carnes, parrilla, charcutería; Comida italiana = pasta, pizza, salsas italianas, quesos italianos; Bebidas = refrescos, agua, vino, cerveza, alcohol; Otros = el resto)
 
