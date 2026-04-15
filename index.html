@@ -271,6 +271,13 @@
         <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password"
           onkeydown="if(event.key==='Enter')authAction()">
       </div>
+      <div id="auth-role-group" class="form-group" style="display:none">
+        <label>Tipo de cuenta</label>
+        <select id="auth-role">
+          <option value="encargado">Encargado / Empleado</option>
+          <option value="jefe">Jefe del restaurante</option>
+        </select>
+      </div>
       <div id="auth-msg" style="display:none;font-size:12px;padding:8px 12px;border-radius:var(--radius-sm);margin-bottom:12px;border:1px solid;line-height:1.5;"></div>
       <button id="auth-btn" class="btn primary" style="width:100%;justify-content:center;" onclick="authAction()">Entrar</button>
     </div>
@@ -296,7 +303,8 @@
       <div class="nav-item"        onclick="showPage('albaranes')" id="nav-albaranes"><span class="icon">🧾</span> Albaranes</div>
     </nav>
     <div class="sidebar-footer">
-      <div id="user-email" style="margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+      <div id="user-email" style="margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px"></div>
+      <div id="user-role-badge" style="margin-bottom:8px;font-size:10px;color:var(--amber);font-weight:600;text-transform:uppercase;letter-spacing:0.05em"></div>
       <button class="btn sm danger" onclick="handleLogout()" style="width:100%;justify-content:center;">Cerrar sesión</button>
     </div>
   </aside>
@@ -331,6 +339,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ─── STATE ────────────────────────────────────────────────────
 let currentUser = null;
 let state = { stock: [], recetas: [], ventas: [], albaranes: [] };
+let userRole = 'encargado'; // 'jefe' | 'encargado'
 let albaranProveedor = '';
 let albaranProveedorFilter = 'Todos';
 let proveedorCatMap = {}; // proveedor → categoría por defecto (guardado en localStorage)
@@ -385,6 +394,7 @@ function setAuthTab(mode) {
   document.getElementById('tab-register').classList.toggle('active', mode === 'register');
   document.getElementById('auth-btn').textContent = mode === 'login' ? 'Entrar' : 'Registrarse';
   document.getElementById('auth-msg').style.display = 'none';
+  document.getElementById('auth-role-group').style.display = mode === 'register' ? 'block' : 'none';
 }
 
 function showAuthMsg(text, isError = true) {
@@ -418,7 +428,8 @@ async function handleRegister() {
   if (password.length < 6) { showAuthMsg('La contraseña debe tener al menos 6 caracteres'); return; }
   const btn = document.getElementById('auth-btn');
   btn.disabled = true; btn.textContent = 'Registrando…';
-  const { error } = await sb.auth.signUp({ email, password });
+  const role = document.getElementById('auth-role')?.value || 'encargado';
+  const { error } = await sb.auth.signUp({ email, password, options: { data: { role } } });
   if (error) {
     showAuthMsg(error.message);
     btn.disabled = false; btn.textContent = 'Registrarse';
@@ -438,7 +449,18 @@ function showApp() {
   document.getElementById('auth-screen').style.display   = 'none';
   document.getElementById('app-layout').style.display    = 'flex';
   document.getElementById('user-email').textContent = currentUser.email;
-  showPage('resumen');
+
+  userRole = currentUser.user_metadata?.role || 'encargado';
+
+  // Ocultar Resumen para encargados
+  const navResumen = document.getElementById('nav-resumen');
+  if (navResumen) navResumen.style.display = userRole === 'jefe' ? '' : 'none';
+
+  // Badge de rol en sidebar footer
+  const roleBadge = document.getElementById('user-role-badge');
+  if (roleBadge) roleBadge.textContent = userRole === 'jefe' ? '★ Jefe' : 'Encargado';
+
+  showPage(userRole === 'jefe' ? 'resumen' : 'stock');
 }
 
 function showAuthScreen() {
@@ -635,6 +657,7 @@ function closeSidebar() {
 const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', albaranes:'Albaranes' };
 
 function showPage(name) {
+  if (name === 'resumen' && userRole !== 'jefe') name = 'stock';
   closeSidebar();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1217,7 +1240,7 @@ function renderLineasAlbaran() {
       <div class="form-row cols3">
         <div><label>Cantidad recibida</label><input type="number" step="0.01" value="${l.cantidad}" oninput="updateLinea(${idx},'cantidad',parseFloat(this.value)||0)"></div>
         <div><label>Unidad</label><select onchange="updateLinea(${idx},'unidad',this.value)">${unidades.map(u=>`<option ${l.unidad===u?'selected':''}>${u}</option>`).join('')}</select></div>
-        <div><label>Precio / unidad (€)</label><input type="number" step="0.01" value="${l.precioUnd}" oninput="updateLinea(${idx},'precioUnd',parseFloat(this.value)||0)"></div>
+        <div><label>Precio/ud con IVA (€)</label><input type="number" step="0.01" value="${l.precioUnd}" oninput="updateLinea(${idx},'precioUnd',parseFloat(this.value)||0)"></div>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
         <span style="font-size:12px;color:var(--text3)">Subtotal: <strong class="mono">${fmt(l.cantidad*l.precioUnd)}</strong></span>

@@ -44,7 +44,7 @@ export default async function handler(req, res) {
               text: `Analiza este albarán de proveedor y extrae cada producto listado.
 Por cada línea de producto devuelve:
 - nombre: nombre del producto
-- cantidad: número (la cantidad recibida)
+- cantidad: número total (si hay multiplicación como "4kg x 3" o "3 × 5 kg", calcula el total: 12 o 15)
 - unidad: unidad de medida (usa solo: kg, g, l, ml, ud, cl, lata, bote)
 - precio_und: precio por unidad en euros (0 si no aparece)
 - categoria: clasifica el producto en UNA de estas categorías exactas: "Carnes a la brasa", "Comida italiana", "Bebidas", "Otros"
