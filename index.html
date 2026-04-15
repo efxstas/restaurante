@@ -335,6 +335,7 @@
       <div class="nav-item active" onclick="showPage('resumen')"   id="nav-resumen"><span class="icon">📊</span> Resumen</div>
       <div class="nav-item"        onclick="showPage('stock')"     id="nav-stock"><span class="icon">📦</span> Stock</div>
       <div class="nav-item"        onclick="showPage('recetas')"   id="nav-recetas"><span class="icon">🍽</span> Recetas</div>
+      <div class="nav-item"        onclick="showPage('ventas')"    id="nav-ventas"><span class="icon">💰</span> Ventas</div>
       <div class="nav-section" style="margin-top:8px">Entradas</div>
       <div class="nav-item"        onclick="showPage('albaranes')" id="nav-albaranes"><span class="icon">🧾</span> Albaranes</div>
       <div class="nav-section" id="nav-section-admin" style="margin-top:8px;display:none">Sistema</div>
@@ -366,6 +367,7 @@
       <div id="page-resumen"   class="page active"></div>
       <div id="page-stock"     class="page"></div>
       <div id="page-recetas"   class="page"></div>
+      <div id="page-ventas"    class="page"></div>
       <div id="page-albaranes" class="page"></div>
       <div id="page-jefe"      class="page"></div>
       <div id="page-admin"     class="page"></div>
@@ -384,17 +386,25 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ─── STATE ────────────────────────────────────────────────────
 let currentUser       = null;
-let currentRestaurant = null;  // { id, nombre, grupoId, grupoNombre? }
-let userRestaurantes  = [];    // lista de restaurantes accesibles
-let state = { stock: [], recetas: [], ventas: [], albaranes: [] };
+let currentRestaurant = null;
+let userRestaurantes  = [];
+let state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [] };
 let userRole = 'encargado'; // 'superadmin' | 'jefe' | 'admin' | 'encargado'
 let albaranProveedor = '';
 let albaranProveedorFilter = 'Todos';
 let proveedorCatMap = {};
 try { proveedorCatMap = JSON.parse(localStorage.getItem('prov_cat_map') || '{}'); } catch {}
-const ADMIN_SECRET = 'ros-admin-2024'; // debe coincidir con ADMIN_SECRET en Vercel env
+const ADMIN_SECRET = 'ros-admin-2024';
+const DEFAULT_CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
+function getCategorias() { return state.categorias.length ? state.categorias.map(c=>c.nombre) : DEFAULT_CATEGORIAS; }
 
-// ─── CATEGORÍAS ───────────────────────────────────────────────
+// Stock sort/filter state
+let stockCatFilter  = 'Todos';
+let stockSortField  = 'nombre';   // 'nombre' | 'cantidad' | 'valor'
+let stockSortDir    = 'asc';      // 'asc' | 'desc'
+let stockProvFilter = 'Todos';    // proveedor filter
+
+// CATEGORIAS legacy alias (usar getCategorias() en su lugar)
 const CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
 
 // ─── UTILS ────────────────────────────────────────────────────
@@ -677,16 +687,18 @@ async function joinRestaurant() {
 
 // ─── DB: CARGAR DATOS ─────────────────────────────────────────
 async function loadStateFromSupabase() {
-  if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [] }; return; }
+  if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [] }; return; }
   const rid = currentRestaurant.id;
-  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes] = await Promise.all([
+  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes, catRes] = await Promise.all([
     sb.from('stock').select('*').eq('restaurante_id', rid),
     sb.from('recetas').select('*').eq('restaurante_id', rid),
     sb.from('receta_ingredientes').select('*'),
     sb.from('ventas').select('*').eq('restaurante_id', rid).order('created_at', { ascending: true }),
     sb.from('albaranes').select('*').eq('restaurante_id', rid),
     sb.from('albaran_lineas').select('*'),
+    sb.from('categorias').select('*').eq('restaurante_id', rid).order('nombre'),
   ]);
+  state.categorias = catRes.data || [];
 
   state.stock = (stockRes.data || []).map(p => ({
     id: p.id, nombre: p.nombre, categoria: p.categoria,
@@ -822,7 +834,7 @@ function closeSidebar() {
 }
 
 // ─── NAV ──────────────────────────────────────────────────────
-const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', albaranes:'Albaranes', jefe:'Mis Locales', admin:'Panel Admin' };
+const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', ventas:'Ventas', albaranes:'Albaranes', jefe:'Mis Locales', admin:'Panel Admin' };
 
 function showPage(name) {
   // Protección por rol
@@ -839,6 +851,7 @@ function showPage(name) {
   if (name==='resumen')   renderResumen();
   if (name==='stock')     renderStock();
   if (name==='recetas')   renderRecetas();
+  if (name==='ventas')    renderVentas();
   if (name==='albaranes') renderAlbaranes();
   if (name==='jefe')      renderJefe();
   if (name==='admin')     renderAdmin();
@@ -881,23 +894,6 @@ function renderResumen() {
       </div>
     </div>
 
-    <div class="sell-panel">
-      <h3>Registrar ventas</h3>
-      <div class="sell-row">
-        <div class="fg">
-          <label style="font-size:12px;font-weight:500;color:var(--amber);display:block;margin-bottom:5px">Plato</label>
-          <select id="sell-receta" style="border-color:var(--amber-border)">
-            ${state.recetas.map(r=>`<option value="${r.id}">${r.nombre} — ${fmt(r.pvp)}</option>`).join('')}
-          </select>
-        </div>
-        <div style="width:90px">
-          <label style="font-size:12px;font-weight:500;color:var(--amber);display:block;margin-bottom:5px">Uds.</label>
-          <input type="number" id="sell-qty" value="1" min="1" style="border-color:var(--amber-border)">
-        </div>
-        <button class="btn primary" onclick="registrarVenta()">Registrar</button>
-      </div>
-    </div>
-
     ${porReceta.length>0 ? `
     <div class="card">
       <div class="card-header"><h2>Rentabilidad por plato</h2></div>
@@ -917,11 +913,50 @@ function renderResumen() {
           }).join('')}</tbody>
         </table>
       </div>
-    </div>` : `<div class="card"><div class="card-body"><div class="empty-state"><div class="emoji">📝</div>Registra ventas arriba para ver rentabilidad</div></div></div>`}
+    </div>` : `<div class="card"><div class="card-body"><div class="empty-state"><div class="emoji">💰</div>Ve a <strong>Ventas</strong> para registrar los platos del día</div></div></div>`}
+  `;
+}
+
+// ─── VENTAS ───────────────────────────────────────────────────
+function renderVentas() {
+  const pg = document.getElementById('page-ventas');
+  document.getElementById('topbar-actions').innerHTML = '';
+
+  pg.innerHTML = `
+    <div class="sell-panel" style="margin-bottom:20px">
+      <h3>Registrar venta manual</h3>
+      <div class="sell-row">
+        <div class="fg">
+          <label style="font-size:12px;font-weight:500;color:var(--amber);display:block;margin-bottom:5px">Plato</label>
+          <select id="sell-receta" style="border-color:var(--amber-border)">
+            ${state.recetas.length===0?'<option disabled>Sin recetas — créalas primero</option>':state.recetas.map(r=>`<option value="${r.id}">${r.nombre} — ${fmt(r.pvp)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="width:90px">
+          <label style="font-size:12px;font-weight:500;color:var(--amber);display:block;margin-bottom:5px">Uds.</label>
+          <input type="number" id="sell-qty" value="1" min="1" style="border-color:var(--amber-border)">
+        </div>
+        <button class="btn primary" onclick="registrarVenta()">+ Registrar</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <h2>Importar CSV de TPV</h2>
+        <button class="btn sm" onclick="document.getElementById('csv-file').click()">Subir CSV / Excel</button>
+        <input type="file" id="csv-file" accept=".csv,.txt,.xls,.xlsx" style="display:none" onchange="importarCSVVentas(event)">
+      </div>
+      <div class="card-body">
+        <div class="alert info" style="margin-bottom:0">
+          📋 El CSV debe tener columnas de <strong>nombre del plato</strong> y <strong>cantidad</strong>. Delimitadores soportados: coma, punto y coma o tabulación. La primera fila puede ser cabecera.
+        </div>
+        <div id="csv-preview" style="margin-top:12px"></div>
+      </div>
+    </div>
 
     ${state.ventas.length>0 ? `
     <div class="card">
-      <div class="card-header"><h2>Historial</h2><button class="btn sm danger" onclick="limpiarVentas()">Limpiar todo</button></div>
+      <div class="card-header"><h2>Historial de ventas</h2><button class="btn sm danger" onclick="limpiarVentas()">Limpiar todo</button></div>
       <div class="card-body no-pad">
         <table>
           <thead><tr><th>Plato</th><th>Uds.</th><th>Ingresos</th><th>Coste</th><th>Beneficio</th><th></th></tr></thead>
@@ -932,8 +967,90 @@ function renderResumen() {
           }).join('')}</tbody>
         </table>
       </div>
-    </div>` : ''}
+    </div>` : '<div class="empty-state" style="padding:40px"><div class="emoji">💰</div>Aún no hay ventas registradas</div>'}
   `;
+}
+
+function importarCSVVentas(event) {
+  const file = event.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    // Detectar delimitador
+    const delim = text.includes('\t') ? '\t' : text.includes(';') ? ';' : ',';
+    const lines = text.split(/\r?\n/).filter(l=>l.trim());
+    if(lines.length < 2) { alert('El archivo parece vacío'); return; }
+
+    // Detectar columnas: buscar índices de nombre y cantidad
+    const header = lines[0].split(delim).map(h=>h.trim().toLowerCase().replace(/['"]/g,''));
+    const nameIdx = header.findIndex(h=>['producto','artículo','articulo','nombre','plato','descripcion','descripción','item'].some(k=>h.includes(k)));
+    const qtyIdx  = header.findIndex(h=>['cantidad','uds','unidades','qty','vendido','vendidas','total'].some(k=>h.includes(k)));
+
+    const preview = document.getElementById('csv-preview');
+    if(nameIdx===-1||qtyIdx===-1) {
+      preview.innerHTML = `<div class="alert danger">No se detectaron columnas de nombre y cantidad. Columnas encontradas: <strong>${header.join(', ')}</strong><br>El archivo debe tener una columna con "producto/artículo/plato" y otra con "cantidad/uds".</div>`;
+      return;
+    }
+
+    // Procesar filas
+    const pendientes = [];
+    const startRow = 1; // saltar cabecera
+    for(let i=startRow; i<lines.length; i++){
+      const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
+      const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
+      if(!nombre||qty<=0) continue;
+      const receta=state.recetas.find(r=>r.nombre.toLowerCase()===nombre.toLowerCase())
+                || state.recetas.find(r=>nombre.toLowerCase().includes(r.nombre.toLowerCase()))
+                || state.recetas.find(r=>r.nombre.toLowerCase().includes(nombre.toLowerCase()));
+      pendientes.push({nombre, qty, receta});
+    }
+
+    if(pendientes.length===0){preview.innerHTML='<div class="alert warn">No se encontraron filas válidas</div>';return;}
+
+    preview.innerHTML = `
+      <div class="section-label" style="margin-bottom:8px">Vista previa — ${pendientes.length} líneas detectadas</div>
+      <table style="margin-bottom:12px">
+        <thead><tr><th>Nombre en CSV</th><th>Uds.</th><th>Receta vinculada</th></tr></thead>
+        <tbody>${pendientes.map((p,i)=>`<tr>
+          <td>${p.nombre}</td>
+          <td class="mono">${p.qty}</td>
+          <td><select id="csv-receta-${i}" style="font-size:12px">
+            <option value="">— No importar —</option>
+            ${state.recetas.map(r=>`<option value="${r.id}" ${p.receta?.id===r.id?'selected':''}>${r.nombre}</option>`).join('')}
+          </select></td>
+        </tr>`).join('')}</tbody>
+      </table>
+      <button class="btn primary" onclick="confirmarImportCSV(${pendientes.length})">✓ Importar ventas</button>
+    `;
+    event.target.value='';
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+async function confirmarImportCSV(count) {
+  const imports=[];
+  for(let i=0;i<count;i++){
+    const sel=document.getElementById(`csv-receta-${i}`);
+    if(!sel||!sel.value) continue;
+    const qty=parseInt(document.querySelector(`#csv-preview tbody tr:nth-child(${i+1}) td:nth-child(2)`)?.textContent)||0;
+    if(qty>0) imports.push({recetaId:sel.value,unidades:qty});
+  }
+  if(imports.length===0){alert('Selecciona al menos una receta');return;}
+  const btn=document.querySelector('[onclick^="confirmarImportCSV"]');
+  if(btn){btn.disabled=true;btn.textContent='Importando…';}
+  for(const imp of imports){
+    const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) continue;
+    const stockUpdates=[];
+    receta.ingredientes.forEach(ing=>{
+      const p=state.stock.find(x=>x.id===ing.stockId);
+      if(p){p.cantidad=Math.max(0,Math.round((p.cantidad-ing.cantidad*imp.unidades)*1000)/1000);stockUpdates.push({id:p.id,cantidad:p.cantidad});}
+    });
+    const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades};
+    state.ventas.push(venta);
+    await dbAddVenta(venta,stockUpdates);
+  }
+  alert(`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`);
+  renderVentas();
 }
 
 async function registrarVenta() {
@@ -950,7 +1067,7 @@ async function registrarVenta() {
   });
   const venta = {id:uid(), recetaId, unidades};
   state.ventas.push(venta);
-  renderResumen();
+  renderVentas();
   await dbAddVenta(venta, stockUpdates);
 }
 
@@ -966,19 +1083,17 @@ async function eliminarVenta(id) {
     }
   });
   state.ventas=state.ventas.filter(x=>x.id!==id);
-  renderResumen();
+  renderVentas();
   await dbDeleteVenta(id, stockRestores);
 }
 
 async function limpiarVentas() {
   if(!confirm('¿Borrar todo el historial?')) return;
-  state.ventas=[]; renderResumen();
+  state.ventas=[]; renderVentas(); renderResumen();
   await dbClearVentas();
 }
 
 // ─── STOCK ────────────────────────────────────────────────────
-let stockCatFilter = 'Todos';
-
 function renderStock() {
   const pg = document.getElementById('page-stock');
   document.getElementById('topbar-actions').innerHTML = `<button class="btn primary" onclick="showModalProducto(null)">+ Nuevo producto</button>`;
@@ -987,11 +1102,36 @@ function renderStock() {
   const agotados=state.stock.filter(p=>p.cantidad<=0).length;
   const valorTotal=state.stock.reduce((s,p)=>s+p.cantidad*p.precioUnd,0);
 
+  // Proveedores únicos de albaranes para filtro
+  const proveedores=[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))];
+
   const q = document.getElementById('stock-search')?.value.toLowerCase()||'';
-  const filtrados = state.stock.filter(p=>{
-    const catOk = stockCatFilter==='Todos' || p.categoria===stockCatFilter;
-    return catOk && (!q||p.nombre.toLowerCase().includes(q));
+  let filtrados = state.stock.filter(p=>{
+    const catOk  = stockCatFilter==='Todos' || p.categoria===stockCatFilter;
+    const provOk = stockProvFilter==='Todos' || (() => {
+      // Mostrar productos que vinieron de albaranes de ese proveedor
+      return state.albaranes
+        .filter(a=>a.proveedor===stockProvFilter)
+        .some(a=>a.lineas.some(l=>l.nombre.toLowerCase()===p.nombre.toLowerCase()));
+    })();
+    return catOk && provOk && (!q||p.nombre.toLowerCase().includes(q));
   });
+
+  // Ordenación
+  filtrados = [...filtrados].sort((a,b)=>{
+    let va,vb;
+    if(stockSortField==='cantidad'){ va=a.cantidad; vb=b.cantidad; }
+    else if(stockSortField==='valor'){ va=a.cantidad*a.precioUnd; vb=b.cantidad*b.precioUnd; }
+    else { va=a.nombre.toLowerCase(); vb=b.nombre.toLowerCase(); }
+    if(va<vb) return stockSortDir==='asc'?-1:1;
+    if(va>vb) return stockSortDir==='asc'?1:-1;
+    return 0;
+  });
+
+  const sortArrow = (f) => stockSortField===f ? (stockSortDir==='asc'?'↑':'↓') : '';
+  const sortTh = (f,label) => `<th style="cursor:pointer;user-select:none" onclick="setStockSort('${f}')">${label} ${sortArrow(f)}</th>`;
+
+  const canEditCats = userRole==='admin'||userRole==='superadmin';
 
   pg.innerHTML = `
     <div class="metrics-grid cols3">
@@ -1000,25 +1140,48 @@ function renderStock() {
       <div class="metric-card ${agotados>0?'accent-red':'accent-green'}"><div class="m-label">Alertas activas</div><div class="m-value">${agotados+bajoMinimo}</div><div class="m-sub">${agotados} agotados · ${bajoMinimo} bajo mínimo</div></div>
     </div>
 
+    ${canEditCats ? `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><h2>Categorías del restaurante</h2></div>
+      <div class="card-body">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          ${getCategorias().map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:12px">
+            ${c}
+            <button onclick="eliminarCategoria('${c.replace(/'/g,"\\'")}'')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;line-height:1;padding:0 2px" title="Eliminar">✕</button>
+          </span>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;max-width:400px">
+          <input id="nueva-cat-input" type="text" placeholder="Nueva categoría…" style="flex:1" onkeydown="if(event.key==='Enter')agregarCategoria()">
+          <button class="btn" onclick="agregarCategoria()">+ Añadir</button>
+        </div>
+      </div>
+    </div>` : ''}
+
     <div class="card">
-      <div class="card-header">
+      <div class="card-header" style="flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex:1">
           <h2>Inventario</h2>
           <div class="filter-tabs">
             <div class="filter-tab ${stockCatFilter==='Todos'?'active':''}" onclick="setStockCat('Todos')">Todo</div>
-            ${CATEGORIAS.map(c=>`<div class="filter-tab ${stockCatFilter===c?'active':''}" onclick="setStockCat('${c}')">${c}</div>`).join('')}
+            ${getCategorias().map(c=>`<div class="filter-tab ${stockCatFilter===c?'active':''}" onclick="setStockCat('${c}')">${c}</div>`).join('')}
           </div>
         </div>
-        <input type="text" id="stock-search" placeholder="Buscar…" oninput="renderStock()" style="width:180px;flex-shrink:0">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${proveedores.length>0?`<select onchange="setStockProv(this.value)" style="font-size:12px;padding:6px 10px">
+            <option value="Todos" ${stockProvFilter==='Todos'?'selected':''}>Todos proveedores</option>
+            ${proveedores.map(p=>`<option value="${p}" ${stockProvFilter===p?'selected':''}>${p}</option>`).join('')}
+          </select>`:''}
+          <input type="text" id="stock-search" placeholder="Buscar…" oninput="renderStock()" style="width:150px">
+        </div>
       </div>
       <div class="card-body no-pad">
         <table>
           <thead><tr>
-            <th>Producto</th><th>Categoría</th><th>Stock actual</th>
-            <th>Precio / unidad</th><th>Valor stock</th><th>Mínimo</th><th>Estado</th><th></th>
+            ${sortTh('nombre','Producto')}<th>Categoría</th><th>Stock actual</th>
+            <th>Precio / ud</th>${sortTh('valor','Valor stock')}${sortTh('cantidad','Cantidad')}<th>Mínimo</th><th>Estado</th><th></th>
           </tr></thead>
           <tbody>
-            ${filtrados.length===0 ? `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">Sin resultados</td></tr>` :
+            ${filtrados.length===0 ? `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3)">Sin resultados</td></tr>` :
               filtrados.map(p=>{
                 const st=stockStatus(p);
                 const eid=JSON.stringify(p.id);
@@ -1027,7 +1190,8 @@ function renderStock() {
                   <td><span class="cat-badge">${p.categoria}</span></td>
                   <td><div style="display:flex;align-items:center;gap:6px"><div class="qty-stepper"><button onclick="ajustarStock(${eid},-1)">−</button><span class="qty-val">${fmtQty(p.cantidad)}</span><button onclick="ajustarStock(${eid},1)">+</button></div><span style="font-size:13px;color:var(--text2);font-weight:600">${p.unidad}</span></div></td>
                   <td class="mono">${fmt(p.precioUnd)}<span style="font-size:11px;color:var(--text3)"> / ${p.unidad}</span></td>
-                  <td class="mono"><span style="font-weight:600">${fmt(p.cantidad*p.precioUnd)}</span><br><span style="font-size:11px;color:var(--text3)">${fmtIngr(p.cantidad,p.unidad)}</span></td>
+                  <td class="mono"><span style="font-weight:600">${fmt(p.cantidad*p.precioUnd)}</span></td>
+                  <td class="mono">${fmtIngr(p.cantidad,p.unidad)}</td>
                   <td class="mono">${fmtIngr(p.minimo,p.unidad)}</td>
                   <td><span class="badge ${st.cls}">${st.txt}</span></td>
                   <td><div style="display:flex;gap:6px"><button class="btn sm" onclick="showModalProducto(${eid})">Editar</button><button class="btn sm danger" onclick="eliminarProducto(${eid})">✕</button></div></td>
@@ -1037,16 +1201,34 @@ function renderStock() {
         </table>
       </div>
     </div>
-
-    <div class="alert info" style="margin-top:-8px">
-      💡 <strong>¿Cómo funciona el precio?</strong> — El campo "Precio / unidad" es lo que te cuesta <strong>1 unidad</strong> de la unidad de medida elegida.
-      Ejemplo: unidad = <em>kg</em>, precio = <em>0,90 €</em> → 1 kg cuesta 0,90 €. Si tienes 10 kg, el valor de tu stock es 9,00 €.
-      En una receta, si pones que ese ingrediente usa 0,3 kg, el coste de ese ingrediente en el plato será 0,27 €.
-    </div>
   `;
 }
 
-function setStockCat(cat) { stockCatFilter=cat; renderStock(); }
+function setStockCat(cat)  { stockCatFilter=cat;  renderStock(); }
+function setStockProv(prov){ stockProvFilter=prov; renderStock(); }
+function setStockSort(field){
+  if(stockSortField===field) stockSortDir=stockSortDir==='asc'?'desc':'asc';
+  else { stockSortField=field; stockSortDir='asc'; }
+  renderStock();
+}
+
+async function agregarCategoria() {
+  const input=document.getElementById('nueva-cat-input'); if(!input) return;
+  const nombre=input.value.trim(); if(!nombre) return;
+  if(getCategorias().includes(nombre)){alert('Ya existe esa categoría');return;}
+  const {error}=await sb.from('categorias').insert({restaurante_id:currentRestaurant.id,nombre});
+  if(error){alert('Error: '+error.message);return;}
+  state.categorias.push({nombre});
+  input.value='';
+  renderStock();
+}
+
+async function eliminarCategoria(nombre) {
+  if(!confirm(`¿Eliminar la categoría "${nombre}"?\nLos productos con esta categoría quedarán como "Otros".`)) return;
+  await sb.from('categorias').delete().eq('restaurante_id',currentRestaurant.id).eq('nombre',nombre);
+  state.categorias=state.categorias.filter(c=>c.nombre!==nombre);
+  renderStock();
+}
 
 async function ajustarStock(id, delta) {
   const p=state.stock.find(x=>x.id===id); if(!p) return;
@@ -1073,7 +1255,7 @@ function showModalProducto(id) {
           <div class="form-row cols2">
             <div class="form-group"><label>Nombre del producto</label><input id="p-nombre" type="text" value="${p?p.nombre:''}" placeholder="Ej: Harina de trigo"></div>
             <div class="form-group"><label>Categoría</label>
-              <select id="p-categoria">${CATEGORIAS.map(c=>`<option ${p&&p.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
+              <select id="p-categoria">${getCategorias().map(c=>`<option ${p&&p.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
             </div>
           </div>
           <div class="form-row cols2">
@@ -1167,7 +1349,7 @@ function renderRecetas() {
     <div style="margin-bottom:16px">
       <div class="filter-tabs">
         <div class="filter-tab ${recetasCatFilter==='Todos'?'active':''}" onclick="setRecetasCat('Todos')">Todo</div>
-        ${CATEGORIAS.map(c=>`<div class="filter-tab ${recetasCatFilter===c?'active':''}" onclick="setRecetasCat('${c}')">${c}</div>`).join('')}
+        ${getCategorias().map(c=>`<div class="filter-tab ${recetasCatFilter===c?'active':''}" onclick="setRecetasCat('${c}')">${c}</div>`).join('')}
       </div>
     </div>
     ${filtradas.length===0 ? `<div class="empty-state"><div class="emoji">🍽</div>No hay recetas en esta categoría</div>` : `
@@ -1240,7 +1422,7 @@ function buildModalRecetaHTML(r) {
             <div class="form-group"><label>PVP — precio de venta (€)</label><input id="r-pvp" type="number" step="0.01" value="${r?r.pvp:''}" oninput="refreshCostPreview()"></div>
           </div>
           <div class="form-group"><label>Categoría</label>
-            <select id="r-categoria">${CATEGORIAS.map(c=>`<option ${r&&r.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
+            <select id="r-categoria">${getCategorias().map(c=>`<option ${r&&r.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
           </div>
           <div class="divider"></div>
           <div class="section-label">Ingredientes (escandallo)</div>
@@ -1333,7 +1515,7 @@ function renderAlbaranes() {
                 <datalist id="proveedores-datalist">${[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))].map(p=>`<option value="${p}">`).join('')}</datalist>
                 <select id="proveedor-cat-default" onchange="onProveedorCatChange()" style="flex-shrink:0" title="Categoría por defecto para este proveedor">
                   <option value="">Categoría auto (OCR)</option>
-                  ${CATEGORIAS.map(c=>`<option value="${c}" ${proveedorCatMap[albaranProveedor]===c?'selected':''}>${c}</option>`).join('')}
+                  ${getCategorias().map(c=>`<option value="${c}" ${proveedorCatMap[albaranProveedor]===c?'selected':''}>${c}</option>`).join('')}
                 </select>
               </div>
               <div style="font-size:11px;color:var(--text3);margin-top:3px">Si asignas una categoría al proveedor, todos sus productos se clasificarán ahí automáticamente</div>
@@ -1408,7 +1590,7 @@ function renderLineasAlbaran() {
     <div class="albaran-linea">
       <div class="form-row cols2" style="margin-bottom:8px">
         <div><label>Producto</label><input type="text" value="${l.nombre}" oninput="updateLinea(${idx},'nombre',this.value)" placeholder="Nombre del producto"></div>
-        <div><label>Categoría</label><select onchange="updateLinea(${idx},'categoria',this.value)">${CATEGORIAS.map(c=>`<option ${l.categoria===c?'selected':''}>${c}</option>`).join('')}</select></div>
+        <div><label>Categoría</label><select onchange="updateLinea(${idx},'categoria',this.value)">${getCategorias().map(c=>`<option ${l.categoria===c?'selected':''}>${c}</option>`).join('')}</select></div>
       </div>
       <div class="form-row cols3">
         <div><label>Cantidad recibida</label><input type="number" step="0.01" value="${l.cantidad}" oninput="updateLinea(${idx},'cantidad',parseFloat(this.value)||0)"></div>
@@ -1424,7 +1606,7 @@ function renderLineasAlbaran() {
 
 function updateLinea(idx,campo,val) { albaranLineas[idx][campo]=val; }
 function agregarLineaAlbaran() {
-  albaranLineas.push({nombre:'',categoria:CATEGORIAS[0],cantidad:0,unidad:'kg',precioUnd:0});
+  albaranLineas.push({nombre:'',categoria:getCategorias()[0],cantidad:0,unidad:'kg',precioUnd:0});
   document.getElementById('albaran-lineas').innerHTML=renderLineasAlbaran();
 }
 function eliminarLineaAlbaran(idx) {
@@ -1448,7 +1630,7 @@ async function confirmarAlbaran() {
       if(l.precioUnd>0) existente.precioUnd=l.precioUnd;
       stockUpdates.push({id:existente.id,nombre:existente.nombre,categoria:existente.categoria,cantidad:existente.cantidad,unidad:existente.unidad,precioUnd:existente.precioUnd,isNew:false});
     } else {
-      const nuevo={id:uid(),nombre:l.nombre,categoria:l.categoria||CATEGORIAS[0],cantidad:l.cantidad,unidad:l.unidad,precioUnd:l.precioUnd,minimo:0};
+      const nuevo={id:uid(),nombre:l.nombre,categoria:l.categoria||getCategorias()[0],cantidad:l.cantidad,unidad:l.unidad,precioUnd:l.precioUnd,minimo:0};
       state.stock.push(nuevo);
       stockUpdates.push({...nuevo,isNew:true});
     }
@@ -1523,7 +1705,7 @@ async function procesarAlbaranOCR(base64, mediaType) {
       const catProv = proveedorCatMap[albaranProveedor] || null;
       albaranLineas = data.lineas.map(l => ({
         nombre: l.nombre || '',
-        categoria: catProv || (CATEGORIAS.includes(l.categoria) ? l.categoria : 'Otros'),
+        categoria: catProv || (getCategorias().includes(l.categoria) ? l.categoria : getCategorias()[0]),
         cantidad: parseFloat(l.cantidad) || 0,
         unidad: l.unidad || 'kg',
         precioUnd: parseFloat(l.precio_und) || 0,
