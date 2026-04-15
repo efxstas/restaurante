@@ -47,9 +47,11 @@ Por cada línea de producto devuelve:
 - cantidad: número (la cantidad recibida)
 - unidad: unidad de medida (usa solo: kg, g, l, ml, ud, cl, lata, bote)
 - precio_und: precio por unidad en euros (0 si no aparece)
+- categoria: clasifica el producto en UNA de estas categorías exactas: "Carnes a la brasa", "Comida italiana", "Bebidas", "Otros"
+  (Carnes a la brasa = carnes, parrilla, charcutería; Comida italiana = pasta, pizza, salsas italianas, quesos italianos; Bebidas = refrescos, agua, vino, cerveza, alcohol; Otros = el resto)
 
 Devuelve ÚNICAMENTE JSON válido sin ningún texto adicional:
-{"lineas": [{"nombre": "string", "cantidad": 0.0, "unidad": "string", "precio_und": 0.0}]}`,
+{"lineas": [{"nombre": "string", "cantidad": 0.0, "unidad": "string", "precio_und": 0.0, "categoria": "string"}]}`,
             },
           ],
         }],

@@ -331,6 +331,10 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ─── STATE ────────────────────────────────────────────────────
 let currentUser = null;
 let state = { stock: [], recetas: [], ventas: [], albaranes: [] };
+let albaranProveedor = '';
+let albaranProveedorFilter = 'Todos';
+let proveedorCatMap = {}; // proveedor → categoría por defecto (guardado en localStorage)
+try { proveedorCatMap = JSON.parse(localStorage.getItem('prov_cat_map') || '{}'); } catch {}
 
 // ─── CATEGORÍAS ───────────────────────────────────────────────
 const CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
@@ -340,6 +344,22 @@ function fmt(n)    { return parseFloat(n).toFixed(2).replace('.',',') + ' €'; 
 function fmtN(n)   { return parseFloat(n).toFixed(2).replace('.',','); }
 function fmtQty(n) { const f = parseFloat(n); return f % 1 === 0 ? parseInt(f) : f.toFixed(2); }
 function uid()     { return crypto.randomUUID(); }
+function fmtIngr(cantidad, unidad) {
+  const n = parseFloat(cantidad);
+  if (unidad === 'kg' && n < 1)  return `${Math.round(n * 1000)} g`;
+  if (unidad === 'l'  && n < 1)  return `${Math.round(n * 1000)} ml`;
+  return `${fmtQty(n)} ${unidad}`;
+}
+function porcionesDisponibles(r) {
+  if (!r.ingredientes || r.ingredientes.length === 0) return null;
+  let min = Infinity;
+  for (const ing of r.ingredientes) {
+    const p = state.stock.find(x => x.id === ing.stockId);
+    if (!p || ing.cantidad <= 0) return 0;
+    min = Math.min(min, Math.floor(p.cantidad / ing.cantidad));
+  }
+  return min === Infinity ? null : min;
+}
 
 function costoReceta(r) {
   return r.ingredientes.reduce((s,ing) => {
@@ -497,7 +517,7 @@ async function loadStateFromSupabase() {
     });
   });
   state.albaranes = (albaranesRes.data || []).map(a => ({
-    id: a.id, fecha: a.fecha, lineas: lineasByAlbaran[a.id] || [],
+    id: a.id, fecha: a.fecha, proveedor: a.proveedor || '', lineas: lineasByAlbaran[a.id] || [],
   }));
 }
 
@@ -560,9 +580,13 @@ async function dbClearVentas() {
 
 // ─── DB: ALBARANES ────────────────────────────────────────────
 async function dbSaveAlbaran(albaran, stockUpdates) {
-  await sb.from('albaranes').insert({
-    id: albaran.id, user_id: currentUser.id, fecha: albaran.fecha,
+  let { error } = await sb.from('albaranes').insert({
+    id: albaran.id, user_id: currentUser.id, fecha: albaran.fecha, proveedor: albaran.proveedor || '',
   });
+  // Si la columna proveedor aún no existe en DB, reintenta sin ella
+  if (error) {
+    await sb.from('albaranes').insert({ id: albaran.id, user_id: currentUser.id, fecha: albaran.fecha });
+  }
   if (albaran.lineas.length > 0) {
     await sb.from('albaran_lineas').insert(
       albaran.lineas.map(l => ({
@@ -787,22 +811,21 @@ function renderStock() {
       <div class="card-body no-pad">
         <table>
           <thead><tr>
-            <th>Producto</th><th>Categoría</th><th>Cantidad</th><th>Unidad</th>
+            <th>Producto</th><th>Categoría</th><th>Stock actual</th>
             <th>Precio / unidad</th><th>Valor stock</th><th>Mínimo</th><th>Estado</th><th></th>
           </tr></thead>
           <tbody>
-            ${filtrados.length===0 ? `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3)">Sin resultados</td></tr>` :
+            ${filtrados.length===0 ? `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text3)">Sin resultados</td></tr>` :
               filtrados.map(p=>{
                 const st=stockStatus(p);
                 const eid=JSON.stringify(p.id);
                 return `<tr>
                   <td style="font-weight:600">${p.nombre}</td>
                   <td><span class="cat-badge">${p.categoria}</span></td>
-                  <td><div class="qty-stepper"><button onclick="ajustarStock(${eid},-1)">−</button><span class="qty-val">${fmtQty(p.cantidad)}</span><button onclick="ajustarStock(${eid},1)">+</button></div></td>
-                  <td>${p.unidad}</td>
+                  <td><div style="display:flex;align-items:center;gap:6px"><div class="qty-stepper"><button onclick="ajustarStock(${eid},-1)">−</button><span class="qty-val">${fmtQty(p.cantidad)}</span><button onclick="ajustarStock(${eid},1)">+</button></div><span style="font-size:13px;color:var(--text2);font-weight:600">${p.unidad}</span></div></td>
                   <td class="mono">${fmt(p.precioUnd)}<span style="font-size:11px;color:var(--text3)"> / ${p.unidad}</span></td>
-                  <td class="mono">${fmt(p.cantidad*p.precioUnd)}</td>
-                  <td class="mono">${fmtQty(p.minimo)} ${p.unidad}</td>
+                  <td class="mono"><span style="font-weight:600">${fmt(p.cantidad*p.precioUnd)}</span><br><span style="font-size:11px;color:var(--text3)">${fmtIngr(p.cantidad,p.unidad)}</span></td>
+                  <td class="mono">${fmtIngr(p.minimo,p.unidad)}</td>
                   <td><span class="badge ${st.cls}">${st.txt}</span></td>
                   <td><div style="display:flex;gap:6px"><button class="btn sm" onclick="showModalProducto(${eid})">Editar</button><button class="btn sm danger" onclick="eliminarProducto(${eid})">✕</button></div></td>
                 </tr>`;
@@ -949,6 +972,8 @@ function renderRecetas() {
       ${filtradas.map(r=>{
         const c=costoReceta(r), mg=margenReceta(r), mc=margenClass(mg);
         const eid=JSON.stringify(r.id);
+        const porciones=porcionesDisponibles(r);
+        const porcionesHtml=porciones!==null?`<span style="font-size:12px;color:${porciones===0?'var(--red)':porciones<=3?'var(--amber)':'var(--teal)'}">${porciones===0?'Sin stock':''+porciones+' porción'+(porciones!==1?'es':'')+' disponible'+(porciones!==1?'s':'')}</span>`:'';
         return `<div class="recipe-card">
           <div class="recipe-card-header">
             <div>
@@ -957,6 +982,7 @@ function renderRecetas() {
                 <span class="cat-badge">${r.categoria}</span>
                 <span style="font-size:12px;color:var(--text2)">PVP: ${fmt(r.pvp)}</span>
               </div>
+              ${porcionesHtml?`<div style="margin-top:4px">${porcionesHtml}</div>`:''}
             </div>
             <div class="recipe-margin"><div class="pct" style="color:${margenColor(mg)}">${fmtN(mg)}%</div><div class="lbl">margen</div></div>
           </div>
@@ -969,7 +995,7 @@ function renderRecetas() {
             <div class="section-label">Ingredientes</div>
             <div>${r.ingredientes.map(ing=>{
               const p=state.stock.find(x=>x.id===ing.stockId);
-              return p?`<span class="ingr-tag">${p.nombre} <span style="color:var(--text3)">${fmtQty(ing.cantidad)} ${p.unidad}</span></span>`:'';
+              return p?`<span class="ingr-tag">${p.nombre} <span style="color:var(--text3)">${fmtIngr(ing.cantidad, p.unidad)}</span></span>`:'';
             }).join('')}</div>
             <div class="recipe-actions">
               <button class="btn sm" onclick="showModalReceta(${eid})">Editar</button>
@@ -1036,7 +1062,7 @@ function buildIngrList() {
   if(tmpIngredientes.length===0) return '<div style="font-size:13px;color:var(--text3);padding:6px 0">Sin ingredientes todavía</div>';
   return tmpIngredientes.map((ing,idx)=>{
     const p=state.stock.find(x=>x.id===ing.stockId); if(!p) return '';
-    return `<div class="ingr-modal-item"><span class="in-name">${p.nombre}</span><span class="in-qty">${fmtQty(ing.cantidad)} ${p.unidad}</span><span class="in-cost">${fmt(p.precioUnd*ing.cantidad)}</span><button class="ingr-remove-btn" onclick="quitarIngr(${idx})">✕</button></div>`;
+    return `<div class="ingr-modal-item"><span class="in-name">${p.nombre}</span><span class="in-qty">${fmtIngr(ing.cantidad, p.unidad)}</span><span class="in-cost">${fmt(p.precioUnd*ing.cantidad)}</span><button class="ingr-remove-btn" onclick="quitarIngr(${idx})">✕</button></div>`;
   }).join('');
 }
 
@@ -1097,6 +1123,18 @@ function renderAlbaranes() {
         <div class="card">
           <div class="card-header"><h2>Foto del albarán</h2></div>
           <div class="card-body">
+            <div style="margin-bottom:12px">
+              <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Proveedor</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <input list="proveedores-datalist" id="albaran-proveedor" placeholder="Nombre del proveedor (ej: ITALIAMO.SL)" style="flex:1;min-width:160px" oninput="onProveedorChange()" value="${albaranProveedor}">
+                <datalist id="proveedores-datalist">${[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))].map(p=>`<option value="${p}">`).join('')}</datalist>
+                <select id="proveedor-cat-default" onchange="onProveedorCatChange()" style="flex-shrink:0" title="Categoría por defecto para este proveedor">
+                  <option value="">Categoría auto (OCR)</option>
+                  ${CATEGORIAS.map(c=>`<option value="${c}" ${proveedorCatMap[albaranProveedor]===c?'selected':''}>${c}</option>`).join('')}
+                </select>
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-top:3px">Si asignas una categoría al proveedor, todos sus productos se clasificarán ahí automáticamente</div>
+            </div>
             <div class="albaran-drop" id="albaran-drop" onclick="document.getElementById('albaran-file').click()"
               ondragover="event.preventDefault();this.classList.add('drag-over')"
               ondragleave="this.classList.remove('drag-over')"
@@ -1129,23 +1167,34 @@ function renderAlbaranes() {
       </div>
     </div>
 
-    ${state.albaranes.length>0 ? `
+    ${state.albaranes.length>0 ? (()=>{
+      const provs=[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))];
+      const filtrados=albaranProveedorFilter==='Todos'?state.albaranes:state.albaranes.filter(a=>a.proveedor===albaranProveedorFilter);
+      return `
     <div class="card">
-      <div class="card-header"><h2>Historial de albaranes</h2></div>
+      <div class="card-header" style="flex-wrap:wrap;gap:8px">
+        <h2>Historial de albaranes</h2>
+        ${provs.length>0?`<div class="filter-tabs" style="flex:1">
+          <div class="filter-tab ${albaranProveedorFilter==='Todos'?'active':''}" onclick="setAlbaranFilter('Todos')">Todos</div>
+          ${provs.map(p=>`<div class="filter-tab ${albaranProveedorFilter===p?'active':''}" onclick="setAlbaranFilter('${p}')">${p}</div>`).join('')}
+        </div>`:''}
+        <button class="btn sm danger" onclick="limpiarHistorialAlbaranes()">Borrar todo</button>
+      </div>
       <div class="card-body no-pad">
         <table>
-          <thead><tr><th>Fecha</th><th>Productos</th><th>Valor total</th><th></th></tr></thead>
-          <tbody>${[...state.albaranes].reverse().map(a=>`
+          <thead><tr><th>Fecha</th><th>Proveedor</th><th>Productos</th><th>Valor total</th><th></th></tr></thead>
+          <tbody>${[...filtrados].reverse().map(a=>`
             <tr>
               <td>${a.fecha}</td>
-              <td style="color:var(--text2)">${a.lineas.map(l=>l.nombre).join(', ')}</td>
+              <td>${a.proveedor?`<span class="cat-badge">${a.proveedor}</span>`:''}</td>
+              <td style="color:var(--text2);font-size:12px">${a.lineas.map(l=>l.nombre).join(', ')}</td>
               <td class="mono">${fmt(a.lineas.reduce((s,l)=>s+l.cantidad*l.precioUnd,0))}</td>
               <td><button class="btn sm danger" onclick="eliminarAlbaran(${JSON.stringify(a.id)})">Eliminar</button></td>
             </tr>`).join('')}
           </tbody>
         </table>
       </div>
-    </div>` : ''}
+    </div>`;})() : ''}
   `;
 }
 
@@ -1201,7 +1250,8 @@ async function confirmarAlbaran() {
       stockUpdates.push({...nuevo,isNew:true});
     }
   });
-  const albaran={id:uid(),fecha:new Date().toLocaleDateString('es-ES'),lineas:validas};
+  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+  const albaran={id:uid(),fecha:new Date().toLocaleDateString('es-ES'),proveedor:albaranProveedor,lineas:validas};
   state.albaranes.push(albaran);
   albaranLineas=[];
   alert(`✓ ${validas.length} producto${validas.length>1?'s':''} añadido${validas.length>1?'s':''} al stock`);
@@ -1210,10 +1260,19 @@ async function confirmarAlbaran() {
 }
 
 async function eliminarAlbaran(id) {
-  if(!confirm('¿Eliminar este albarán del historial?')) return;
+  if(!confirm('¿Eliminar este albarán?\n\nSe restarán del stock las cantidades que añadió.')) return;
+  const albaran=state.albaranes.find(x=>x.id===id);
+  const reverts=[];
+  if(albaran){
+    for(const l of albaran.lineas){
+      const p=state.stock.find(x=>x.nombre.toLowerCase()===l.nombre.toLowerCase());
+      if(p){ p.cantidad=Math.max(0,Math.round((p.cantidad-l.cantidad)*1000)/1000); reverts.push({id:p.id,cantidad:p.cantidad}); }
+    }
+  }
   state.albaranes=state.albaranes.filter(x=>x.id!==id);
   renderAlbaranes();
   await dbDeleteAlbaran(id);
+  await Promise.all(reverts.map(u=>sb.from('stock').update({cantidad:u.cantidad}).eq('id',u.id)));
 }
 
 function handleFileSelect(event) { processImageFile(event.target.files[0]); }
@@ -1258,9 +1317,10 @@ async function procesarAlbaranOCR(base64, mediaType) {
     }
     const data = await res.json();
     if (data.lineas && data.lineas.length > 0) {
+      const catProv = proveedorCatMap[albaranProveedor] || null;
       albaranLineas = data.lineas.map(l => ({
         nombre: l.nombre || '',
-        categoria: CATEGORIAS[0],
+        categoria: catProv || (CATEGORIAS.includes(l.categoria) ? l.categoria : 'Otros'),
         cantidad: parseFloat(l.cantidad) || 0,
         unidad: l.unidad || 'kg',
         precioUnd: parseFloat(l.precio_und) || 0,
@@ -1281,6 +1341,39 @@ async function procesarAlbaranOCR(base64, mediaType) {
       drop.innerHTML = `<div class="drop-icon">📄</div><div class="drop-text">Pulsa o arrastra aquí</div><div class="drop-sub">Foto del albarán (JPG, PNG)</div>`;
     }
   }
+}
+
+function onProveedorChange() {
+  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+  const catSelect = document.getElementById('proveedor-cat-default');
+  if (catSelect) catSelect.value = proveedorCatMap[albaranProveedor] || '';
+}
+function onProveedorCatChange() {
+  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+  const cat = document.getElementById('proveedor-cat-default')?.value || '';
+  if (albaranProveedor) {
+    if (cat) proveedorCatMap[albaranProveedor] = cat;
+    else delete proveedorCatMap[albaranProveedor];
+    localStorage.setItem('prov_cat_map', JSON.stringify(proveedorCatMap));
+  }
+}
+function setAlbaranFilter(prov) { albaranProveedorFilter = prov; renderAlbaranes(); }
+
+async function limpiarHistorialAlbaranes() {
+  if (!confirm('¿Borrar TODO el historial de albaranes?\n\nSe restarán del stock todas las cantidades añadidas. Esta acción no se puede deshacer.')) return;
+  const reverts=[];
+  for(const albaran of state.albaranes){
+    for(const l of albaran.lineas){
+      const p=state.stock.find(x=>x.nombre.toLowerCase()===l.nombre.toLowerCase());
+      if(p){ p.cantidad=Math.max(0,Math.round((p.cantidad-l.cantidad)*1000)/1000); }
+    }
+  }
+  state.stock.forEach(p=>{ if(p.cantidad!==undefined) reverts.push({id:p.id,cantidad:p.cantidad}); });
+  const ids=state.albaranes.map(a=>a.id);
+  state.albaranes=[];
+  renderAlbaranes();
+  for(const id of ids){ await dbDeleteAlbaran(id); }
+  await Promise.all(reverts.map(u=>sb.from('stock').update({cantidad:u.cantidad}).eq('id',u.id)));
 }
 
 // ─── INIT ─────────────────────────────────────────────────────
