@@ -1176,6 +1176,7 @@ function importarCSVVentas(event) {
       ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
         ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente.
       </div>`:''}
+      <button class="btn primary" style="margin-bottom:10px" onclick="confirmarImportCSV()">✓ Importar ventas</button>
       <table style="margin-bottom:12px">
         <thead><tr><th>Nombre</th><th>Uds.</th><th>Acción</th></tr></thead>
         <tbody>${pendientes.map((p,i)=>`<tr>
