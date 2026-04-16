@@ -419,13 +419,24 @@ function getCategorias() { return state.categorias.length ? state.categorias.map
 
 function guessCategoriaFromName(nombre) {
   const n = nombre.toLowerCase();
-  const bebidas = ['agua','cerveza','vino','copa','cava','prosecco','champan','gin','vodka','whisky','ron','tequila','aperol','spritz','mojito','sangria','refresco','zumo','zumos','naranja','limon','cola','pepsi','seven','fanta','tonica','bitter','aquarius','lipton','te ','café','cafe','cortado','carajillo','cappuccino','clara','clara','cider','sidra','lambrusco','txakoli','cava','brut','rosado','tinto verano','bitter','aperitivo','baileys','licor','chupito','combi','copa de','copa '];
-  const italiana = ['pizza','pasta','spaghetti','risotto','lasagna','penne','rigatoni','gnocchi','focaccia','bruschetta','carpaccio','burrata','insalata','scamorza','cozze','carciofi','involtini','fritura','pesce','ravioli','fagottini','fettuccine','pappardelle','mezze','tagliatelle','gnocchi','carbonara','bolognese','amatriciana','norma','pesto','vongole','pescatora','astice','scoglio','granchio'];
-  const carnes = ['chuleton','solomillo','entrecot','entrecotte','carne','brasa','parrilla','secreto','entraña','tomahawk','tira de asado','costilla','chuleta','cordero','ternera','pollo','petto','tagliata','scaloppine','asado','mixta'];
-  if (bebidas.some(k=>n.includes(k))) return 'Bebidas';
-  if (italiana.some(k=>n.includes(k))) return 'Comida italiana';
-  if (carnes.some(k=>n.includes(k))) return 'Carnes a la brasa';
-  return 'Otros';
+  const cats = getCategorias();
+
+  // Keywords por tipo semántico → busca la categoría real que más se parezca
+  const matchBebidas  = ['agua','cerveza','vino','copa','cava','prosecco','gin','vodka','whisky','ron','tequila','aperol','mojito','sangria','refresco','zumo','cola','pepsi','fanta','tonica','bitter','aquarius','lipton','te ','té ','cafe','café','cortado','carajillo','cappuccino','clara','sidra','lambrusco','brut','rosado','tinto verano','baileys','licor','chupito','combi','seven','gaseosa','leche'];
+  const matchItaliana = ['pizza','spaghetti','risotto','lasagna','penne','rigatoni','gnocchi','focaccia','carpaccio','burrata','insalata','scamorza','cozze','carciofi','involtini','fritura pesce','ravioli','fagottini','fettuccine','pappardelle','mezze lune','carbonara','bolognese','amatriciana','norma','pesto','vongole','pescatora','astice','scoglio','granchio','tagliata','scaloppine'];
+  const matchCarnes   = ['chuleton','solomillo','entrecot','entrecotte','brasa','parrilla','secreto','entraña','tomahawk','tira de asado','costilla','chuleta','cordero','ternera','petto pollo','lubina','rodaballo','pulpo','calamar','mixta brasa'];
+
+  const isBebida  = matchBebidas.some(k=>n.includes(k));
+  const isItalian = matchItaliana.some(k=>n.includes(k));
+  const isCarne   = matchCarnes.some(k=>n.includes(k));
+
+  // Buscar la categoría real del restaurante que coincida semánticamente
+  const find = (keywords) => cats.find(c => keywords.some(k=>c.toLowerCase().includes(k)));
+
+  if (isBebida)  return find(['bebida','drink','bar']) || cats.find(c=>/bebid/i.test(c)) || 'Bebidas';
+  if (isItalian) return find(['italian','pasta','pizza']) || cats.find(c=>/italian/i.test(c)) || 'Comida italiana';
+  if (isCarne)   return find(['carne','brasa','grill','parrill']) || cats.find(c=>/carne|brasa/i.test(c)) || 'Carnes a la brasa';
+  return cats.find(c=>/otro|other|general|misc/i.test(c)) || cats[cats.length-1] || 'Otros';
 }
 
 // Stock sort/filter state
@@ -792,7 +803,8 @@ async function dbSaveProducto(p) {
   });
 }
 async function dbDeleteProducto(id) {
-  await sb.from('stock').delete().eq('id', id);
+  const {error} = await sb.from('stock').delete().eq('id', id);
+  if (error) throw new Error('Eliminar producto: ' + error.message);
 }
 async function dbUpdateStockCantidad(id, cantidad) {
   await sb.from('stock').update({ cantidad }).eq('id', id);
@@ -1174,7 +1186,7 @@ function renderVentas() {
                 const r=state.recetas.find(x=>x.id===v.recetaId); if(!r) return '';
                 const ing=r.pvp*v.unidades, cos=costoReceta(r)*v.unidades;
                 const fecha=v.createdAt?new Date(v.createdAt).toLocaleDateString('es-ES'):'';
-                return `<tr><td style="font-weight:500">${r.nombre}</td><td class="mono">${v.unidades}</td><td class="mono">${fmt(ing)}</td><td class="mono">${fmt(cos)}</td><td class="mono" style="font-weight:600;color:var(--teal)">${fmt(ing-cos)}</td><td style="font-size:12px;color:var(--text3)">${fecha}</td><td><button class="btn sm danger" onclick="eliminarVenta(${JSON.stringify(v.id)})">✕</button></td></tr>`;
+                return `<tr><td style="font-weight:500">${r.nombre}</td><td class="mono">${v.unidades}</td><td class="mono">${fmt(ing)}</td><td class="mono">${fmt(cos)}</td><td class="mono" style="font-weight:600;color:var(--teal)">${fmt(ing-cos)}</td><td style="font-size:12px;color:var(--text3)">${fecha}</td><td><button class="btn sm danger" onclick="eliminarVenta('${v.id}')">✕</button></td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -1531,9 +1543,11 @@ async function ajustarStock(id, delta) {
 
 async function eliminarProducto(id) {
   if(!confirm('¿Eliminar este producto?')) return;
-  state.stock=state.stock.filter(x=>x.id!==id);
-  renderStock();
-  await dbDeleteProducto(id);
+  try {
+    await dbDeleteProducto(id);
+    state.stock=state.stock.filter(x=>x.id!==id);
+    renderStock();
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 function showModalProducto(id) {
@@ -1584,7 +1598,7 @@ function showModalProducto(id) {
         </div>
         <div class="modal-footer">
           <button class="btn" onclick="closeModal()">Cancelar</button>
-          <button class="btn primary" onclick="guardarProducto(${JSON.stringify(id||null)})">Guardar</button>
+          <button class="btn primary" onclick="${id?`guardarProducto('${id}')`:'guardarProducto(null)'}">Guardar</button>
         </div>
       </div>
     </div>`;
@@ -1625,7 +1639,9 @@ async function guardarProducto(id) {
     state.stock.push(producto);
   }
   closeModal(); renderStock();
-  await dbSaveProducto(producto);
+  try {
+    await dbSaveProducto(producto);
+  } catch(e) { alert('Error al guardar producto: ' + e.message); }
 }
 
 // ─── RECETAS ──────────────────────────────────────────────────
@@ -1757,7 +1773,7 @@ function buildModalRecetaHTML(r) {
             <div class="cp-item"><div class="cp-label">Beneficio/ud</div><div class="cp-value mono" style="color:${pvpVal-costo>=0?'var(--teal)':'var(--red)'}">${fmt(pvpVal-costo)}</div></div>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="guardarReceta(${JSON.stringify(r?r.id:null)})">${r?'Guardar cambios':'Crear receta'}</button></div>
+        <div class="modal-footer"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn primary" onclick="${r?`guardarReceta('${r.id}')`:'guardarReceta(null)'}">${r?'Guardar cambios':'Crear receta'}</button></div>
       </div>
     </div>`;
 }
@@ -2170,7 +2186,7 @@ function renderAlbaranes() {
               <td>${a.proveedor?`<span class="cat-badge">${a.proveedor}</span>`:''}</td>
               <td style="color:var(--text2);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.lineas.map(l=>l.nombre).join(', ')}</td>
               <td class="mono" style="font-weight:600">${fmt(a.lineas.reduce((s,l)=>s+l.cantidad*l.precioUnd,0))}</td>
-              <td><button class="btn sm danger" onclick="eliminarAlbaran(${JSON.stringify(a.id)})">Eliminar</button></td>
+              <td><button class="btn sm danger" onclick="eliminarAlbaran('${a.id}')">Eliminar</button></td>
             </tr>`).join('')}
           </tbody>
         </table>
