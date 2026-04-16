@@ -1155,10 +1155,11 @@ function importarCSVVentas(event) {
     .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
 
   const detectCols = header => {
-    const nameIdx = header.findIndex(h => ['nombre','producto','articulo','plato','descripcion','item','concepto'].some(k=>h.includes(k)));
-    let qtyIdx = header.findIndex(h => ['unidades','cantidad','uds','qty','vendido','vendidas','unid'].some(k=>h.includes(k)));
+    const nameIdx    = header.findIndex(h => ['nombre','producto','articulo','plato','descripcion','item','concepto'].some(k=>h.includes(k)));
+    let   qtyIdx     = header.findIndex(h => ['unidades','cantidad','uds','qty','vendido','vendidas','unid'].some(k=>h.includes(k)));
     if (qtyIdx===-1) qtyIdx = header.findIndex(h => h.includes('total') && !h.includes('importe'));
-    return {nameIdx, qtyIdx};
+    const importeIdx = header.findIndex(h => ['importe','ingreso','revenue'].some(k=>h.includes(k)));
+    return {nameIdx, qtyIdx, importeIdx};
   };
 
   const showPreview = rawRows => {
@@ -1170,17 +1171,19 @@ function importarCSVVentas(event) {
       return {...r, receta};
     });
     window._csvPendientes = pendientes;
-    const nuevas = pendientes.filter(p=>!p.receta).length;
+    const nuevas  = pendientes.filter(p=>!p.receta).length;
+    const hayPvp  = pendientes.some(p=>p.pvp>0);
     document.getElementById('csv-preview').innerHTML = `
       <div class="section-label" style="margin-bottom:6px">Vista previa — ${pendientes.length} líneas detectadas</div>
       ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
-        ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente.
+        ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente${hayPvp?' con PVP calculado del CSV':''}.
       </div>`:''}
       <button class="btn primary" style="margin-bottom:10px" onclick="confirmarImportCSV()">✓ Importar ventas</button>
       <table style="margin-bottom:12px">
-        <thead><tr><th>Nombre</th><th>Uds.</th><th>Acción</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Uds.</th>${hayPvp?'<th>PVP (Importe÷Uds)</th>':''}<th>Acción</th></tr></thead>
         <tbody>${pendientes.map((p,i)=>`<tr>
           <td>${p.nombre}</td><td class="mono">${p.qty}</td>
+          ${hayPvp?`<td class="mono" style="color:var(--teal)">${p.pvp>0?fmtN(p.pvp)+' €':'—'}</td>`:''}
           <td><select id="csv-receta-${i}" style="font-size:12px">
             ${!p.receta?`<option value="__nueva__" selected>✨ Crear receta nueva</option>`:''}
             <option value="">— No importar —</option>
@@ -1201,12 +1204,16 @@ function importarCSVVentas(event) {
       const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
       if (data.length < 2) { alert('El archivo parece vacío'); return; }
       const header = data[0].map(norm);
-      const {nameIdx, qtyIdx} = detectCols(header);
+      const {nameIdx, qtyIdx, importeIdx} = detectCols(header);
       if (nameIdx===-1||qtyIdx===-1) {
         preview.innerHTML=`<div class="alert danger">No se detectaron columnas correctas.<br><strong>Encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}</div>`;
         return;
       }
-      showPreview(data.slice(1).map(r=>({nombre:String(r[nameIdx]||'').trim(),qty:parseInt(r[qtyIdx])||0})).filter(r=>r.nombre&&r.qty>0));
+      showPreview(data.slice(1).map(r=>{
+        const qty=parseInt(r[qtyIdx])||0;
+        const importe=importeIdx>=0?parseFloat(r[importeIdx])||0:0;
+        return {nombre:String(r[nameIdx]||'').trim(), qty, pvp: qty>0&&importe>0?Math.round(importe/qty*100)/100:0};
+      }).filter(r=>r.nombre&&r.qty>0));
     } else {
       const text = e.target.result.replace(/^\uFEFF/,'');
       const firstLine = text.split(/\r?\n/)[0]||'';
@@ -1214,7 +1221,7 @@ function importarCSVVentas(event) {
       const lines = text.split(/\r?\n/).filter(l=>l.trim());
       if (lines.length<2) { alert('El archivo parece vacío'); return; }
       const header = lines[0].split(delim).map(norm);
-      const {nameIdx, qtyIdx} = detectCols(header);
+      const {nameIdx, qtyIdx, importeIdx} = detectCols(header);
       if (nameIdx===-1||qtyIdx===-1) {
         preview.innerHTML=`<div class="alert danger">No se detectaron columnas correctas.<br><strong>Encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}</div>`;
         return;
@@ -1223,7 +1230,8 @@ function importarCSVVentas(event) {
       for(let i=1;i<lines.length;i++){
         const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
         const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
-        if(nombre&&qty>0) rawRows.push({nombre,qty});
+        const importe=importeIdx>=0?parseFloat((cols[importeIdx]||'').replace(',','.'))||0:0;
+        if(nombre&&qty>0) rawRows.push({nombre, qty, pvp: qty>0&&importe>0?Math.round(importe/qty*100)/100:0});
       }
       showPreview(rawRows);
     }
@@ -1239,7 +1247,7 @@ async function confirmarImportCSV() {
   for(let i=0;i<pendientes.length;i++){
     const sel=document.getElementById(`csv-receta-${i}`);
     if(!sel||!sel.value) continue;
-    imports.push({recetaId:sel.value, unidades:pendientes[i].qty, nombre:pendientes[i].nombre});
+    imports.push({recetaId:sel.value, unidades:pendientes[i].qty, nombre:pendientes[i].nombre, pvp:pendientes[i].pvp||0});
   }
   if(imports.length===0){alert('Selecciona al menos una línea para importar');return;}
 
@@ -1248,7 +1256,7 @@ async function confirmarImportCSV() {
 
   // 1. Crear todas las recetas nuevas en paralelo (batch insert)
   const nuevas = imports.filter(imp=>imp.recetaId==='__nueva__' && !state.recetas.find(r=>r.nombre.toLowerCase()===imp.nombre.toLowerCase()));
-  const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:0,ingredientes:[]}));
+  const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:imp.pvp||0,ingredientes:[]}));
 
   if(recetasNuevas.length>0){
     const {error:errR} = await sb.from('recetas').insert(recetasNuevas.map(r=>({
@@ -1259,13 +1267,17 @@ async function confirmarImportCSV() {
     recetasNuevas.forEach(r=>state.recetas.push(r));
   }
 
-  // Resolver IDs de recetas nuevas
-  imports.forEach(imp=>{
+  // Resolver IDs de recetas nuevas + actualizar pvp si antes era 0
+  await Promise.all(imports.map(async imp=>{
     if(imp.recetaId==='__nueva__'){
       const r=state.recetas.find(x=>x.nombre.toLowerCase()===imp.nombre.toLowerCase());
       if(r) imp.recetaId=r.id;
     }
-  });
+    if(imp.pvp>0){
+      const r=state.recetas.find(x=>x.id===imp.recetaId);
+      if(r&&r.pvp===0){ r.pvp=imp.pvp; await sb.from('recetas').update({pvp:imp.pvp}).eq('id',r.id); }
+    }
+  }));
 
   if(btn) btn.textContent=`Registrando ventas…`;
 
@@ -1746,7 +1758,6 @@ async function guardarReceta(id) {
   const nombre=document.getElementById('r-nombre').value.trim();
   const pvp=parseFloat(document.getElementById('r-pvp').value)||0;
   if(!nombre){alert('Introduce el nombre del plato');return;}
-  if(pvp<=0){alert('Introduce un precio de venta');return;}
   const fields={nombre,pvp,categoria:document.getElementById('r-categoria').value,ingredientes:[...tmpIngredientes]};
   let receta;
   if(id) {
@@ -1757,7 +1768,11 @@ async function guardarReceta(id) {
     state.recetas.push(receta);
   }
   closeModal(); renderRecetas();
-  await dbSaveReceta(receta);
+  try {
+    await dbSaveReceta(receta);
+  } catch(e) {
+    alert('Error al guardar receta: ' + e.message);
+  }
 }
 
 // ─── OPTIMIZACIÓN ─────────────────────────────────────────────
