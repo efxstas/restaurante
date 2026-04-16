@@ -1243,36 +1243,46 @@ async function confirmarImportCSV() {
   if(imports.length===0){alert('Selecciona al menos una línea para importar');return;}
 
   const btn=document.querySelector('[onclick^="confirmarImportCSV"]');
-  if(btn){btn.disabled=true;btn.textContent='Importando…';}
+  if(btn){btn.disabled=true;btn.textContent=`Creando recetas…`;}
 
-  let nuevasCreadas=0;
-  for(const imp of imports){
-    // Crear receta automáticamente si el usuario eligió "nueva"
+  // 1. Crear todas las recetas nuevas en paralelo (batch insert)
+  const nuevas = imports.filter(imp=>imp.recetaId==='__nueva__' && !state.recetas.find(r=>r.nombre.toLowerCase()===imp.nombre.toLowerCase()));
+  const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:0,ingredientes:[]}));
+
+  if(recetasNuevas.length>0){
+    // Insert en batch (una sola llamada a Supabase)
+    await sb.from('recetas').insert(recetasNuevas.map(r=>({
+      id:r.id, restaurante_id:currentRestaurant.id,
+      nombre:r.nombre, categoria:r.categoria, pvp:r.pvp
+    })));
+    recetasNuevas.forEach(r=>state.recetas.push(r));
+  }
+
+  // Resolver IDs de recetas nuevas
+  imports.forEach(imp=>{
     if(imp.recetaId==='__nueva__'){
-      const existe=state.recetas.find(r=>r.nombre.toLowerCase()===imp.nombre.toLowerCase());
-      let receta = existe;
-      if(!receta){
-        receta={id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:0,ingredientes:[]};
-        state.recetas.push(receta);
-        await dbSaveReceta(receta);
-        nuevasCreadas++;
-      }
-      imp.recetaId=receta.id;
+      const r=state.recetas.find(x=>x.nombre.toLowerCase()===imp.nombre.toLowerCase());
+      if(r) imp.recetaId=r.id;
     }
+  });
 
-    const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) continue;
-    const stockUpdates=[];
-    receta.ingredientes.forEach(ing=>{
-      const p=state.stock.find(x=>x.id===ing.stockId);
-      if(p){p.cantidad=Math.max(0,Math.round((p.cantidad-ing.cantidad*imp.unidades)*1000)/1000);stockUpdates.push({id:p.id,cantidad:p.cantidad});}
-    });
+  if(btn) btn.textContent=`Registrando ventas…`;
+
+  // 2. Insertar todas las ventas en batch
+  const ventasNuevas=[];
+  imports.forEach(imp=>{
+    const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) return;
     const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades,createdAt:new Date().toISOString()};
     state.ventas.push(venta);
-    await dbAddVenta(venta,stockUpdates);
+    ventasNuevas.push({id:venta.id,restaurante_id:currentRestaurant.id,receta_id:venta.recetaId,unidades:venta.unidades,created_at:venta.createdAt});
+  });
+
+  if(ventasNuevas.length>0){
+    await sb.from('ventas').insert(ventasNuevas);
   }
 
   let msg=`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`;
-  if(nuevasCreadas>0) msg+=`\n✨ ${nuevasCreadas} receta${nuevasCreadas>1?'s':''} nueva${nuevasCreadas>1?'s':''} creada${nuevasCreadas>1?'s':''} — ve a Recetas para añadir sus ingredientes`;
+  if(recetasNuevas.length>0) msg+=`\n✨ ${recetasNuevas.length} receta${recetasNuevas.length>1?'s':''} nueva${recetasNuevas.length>1?'s':''} creada${recetasNuevas.length>1?'s':''} — ve a Recetas para añadir ingredientes`;
   alert(msg);
   document.getElementById('csv-preview').innerHTML='';
   renderVentas();
