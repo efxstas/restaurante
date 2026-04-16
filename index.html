@@ -416,9 +416,25 @@ function getCategorias() { return state.categorias.length ? state.categorias.map
 
 // Stock sort/filter state
 let stockCatFilter  = 'Todos';
-let stockSortField  = 'nombre';   // 'nombre' | 'cantidad' | 'valor'
-let stockSortDir    = 'asc';      // 'asc' | 'desc'
-let stockProvFilter = 'Todos';    // proveedor filter
+let stockSortField  = 'nombre';
+let stockSortDir    = 'asc';
+let stockProvFilter = 'Todos';
+
+// Resumen period filter
+let resumenPeriodo    = 'todos';
+let resumenFechaDesde = '';
+let resumenFechaHasta = '';
+
+// Recetas sort
+let recetasSortField = 'nombre';  // 'nombre' | 'margen' | 'pvp' | 'coste'
+let recetasSortDir   = 'asc';
+
+// Ventas sort + period filter
+let ventasSortField  = 'fecha';    // 'fecha' | 'nombre' | 'unidades' | 'ingreso'
+let ventasSortDir    = 'desc';
+let ventasPeriodo    = 'todos';
+let ventasFechaDesde = '';
+let ventasFechaHasta = '';
 
 // CATEGORIAS legacy alias (usar getCategorias() en su lugar)
 const CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
@@ -734,6 +750,7 @@ async function loadStateFromSupabase() {
 
   state.ventas = (ventasRes.data || []).map(v => ({
     id: v.id, recetaId: v.receta_id, unidades: v.unidades,
+    createdAt: v.created_at || '',
   }));
 
   const lineasByAlbaran = {};
@@ -874,19 +891,74 @@ function showPage(name) {
 }
 function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
 
+// ─── HELPERS PERÍODO ─────────────────────────────────────────
+function filtrarPorPeriodo(ventas, periodo, desde, hasta) {
+  if(periodo==='todos') return ventas;
+  const now = new Date();
+  return ventas.filter(v => {
+    if(!v.createdAt) return periodo==='todos';
+    const d = new Date(v.createdAt);
+    if(periodo==='semana'){
+      const lun=new Date(now); lun.setDate(now.getDate()-((now.getDay()+6)%7)); lun.setHours(0,0,0,0);
+      return d>=lun;
+    }
+    if(periodo==='mes') return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+    if(periodo==='custom'&&desde&&hasta){
+      const d0=new Date(desde), d1=new Date(hasta); d1.setHours(23,59,59);
+      return d>=d0&&d<=d1;
+    }
+    return true;
+  });
+}
+
+function periodFilterHTML(periodo, desde, hasta, onChangeFn) {
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+    <div class="filter-tabs">
+      <div class="filter-tab ${periodo==='todos'?'active':''}"  onclick="${onChangeFn}('todos')">Todo</div>
+      <div class="filter-tab ${periodo==='semana'?'active':''}" onclick="${onChangeFn}('semana')">Esta semana</div>
+      <div class="filter-tab ${periodo==='mes'?'active':''}"    onclick="${onChangeFn}('mes')">Este mes</div>
+      <div class="filter-tab ${periodo==='custom'?'active':''}" onclick="${onChangeFn}('custom')">Período</div>
+    </div>
+    ${periodo==='custom'?`<input type="date" value="${desde}" onchange="window._pd=this.value;${onChangeFn}('custom')" style="font-size:12px;padding:4px 8px">
+    <span style="color:var(--text3)">—</span>
+    <input type="date" value="${hasta}" onchange="window._ph=this.value;${onChangeFn}('custom')" style="font-size:12px;padding:4px 8px">`:''}
+  </div>`;
+}
+
 // ─── RESUMEN ──────────────────────────────────────────────────
+function setResumenPeriodo(p) {
+  resumenPeriodo=p;
+  if(p==='custom'){const h=new Date().toISOString().slice(0,10);resumenFechaDesde=window._pd||resumenFechaDesde||h;resumenFechaHasta=window._ph||resumenFechaHasta||h;}
+  renderResumen();
+}
+
+function setVentasPeriodo(p) {
+  ventasPeriodo=p;
+  if(p==='custom'){const h=new Date().toISOString().slice(0,10);ventasFechaDesde=window._pd||ventasFechaDesde||h;ventasFechaHasta=window._ph||ventasFechaHasta||h;}
+  renderVentas();
+}
+
+function setVentasSort(f) {
+  if(ventasSortField===f) ventasSortDir = ventasSortDir==='asc'?'desc':'asc';
+  else { ventasSortField=f; ventasSortDir = f==='fecha'?'desc':'asc'; }
+  renderVentas();
+}
+
 function renderResumen() {
   const pg = document.getElementById('page-resumen');
-  const totalVentas = state.ventas.reduce((s,v)=>{ const r=state.recetas.find(x=>x.id===v.recetaId); return s+(r?r.pvp*v.unidades:0); },0);
-  const totalCosto  = state.ventas.reduce((s,v)=>{ const r=state.recetas.find(x=>x.id===v.recetaId); return s+(r?costoReceta(r)*v.unidades:0); },0);
+  const bajoMinimo = state.stock.filter(p=>p.cantidad>0&&p.cantidad<=p.minimo).length;
+  const agotados   = state.stock.filter(p=>p.cantidad<=0).length;
+
+  const ventasFiltradas = filtrarPorPeriodo(state.ventas, resumenPeriodo, resumenFechaDesde, resumenFechaHasta);
+
+  const totalVentas = ventasFiltradas.reduce((s,v)=>{ const r=state.recetas.find(x=>x.id===v.recetaId); return s+(r?r.pvp*v.unidades:0); },0);
+  const totalCosto  = ventasFiltradas.reduce((s,v)=>{ const r=state.recetas.find(x=>x.id===v.recetaId); return s+(r?costoReceta(r)*v.unidades:0); },0);
   const beneficio   = totalVentas - totalCosto;
   const margenTotal = totalVentas > 0 ? (beneficio/totalVentas)*100 : 0;
-  const totalPlatos = state.ventas.reduce((s,v)=>s+v.unidades, 0);
-  const bajoMinimo  = state.stock.filter(p=>p.cantidad>0&&p.cantidad<=p.minimo).length;
-  const agotados    = state.stock.filter(p=>p.cantidad<=0).length;
+  const totalPlatos = ventasFiltradas.reduce((s,v)=>s+v.unidades, 0);
 
   const porReceta = state.recetas.map(r=>{
-    const uds=state.ventas.filter(v=>v.recetaId===r.id).reduce((s,v)=>s+v.unidades,0);
+    const uds=ventasFiltradas.filter(v=>v.recetaId===r.id).reduce((s,v)=>s+v.unidades,0);
     const ing=r.pvp*uds, cos=costoReceta(r)*uds;
     return {...r, uds, ing, benef:ing-cos, mg:margenReceta(r)};
   }).filter(r=>r.uds>0).sort((a,b)=>b.benef-a.benef);
@@ -895,12 +967,14 @@ function renderResumen() {
     ${agotados>0  ? `<div class="alert danger">⚠ ${agotados} producto${agotados>1?'s':''} agotado${agotados>1?'s':''}</div>` : ''}
     ${bajoMinimo>0 ? `<div class="alert warn">📉 ${bajoMinimo} producto${bajoMinimo>1?'s':''} bajo mínimo</div>` : ''}
 
+    ${periodFilterHTML(resumenPeriodo, resumenFechaDesde, resumenFechaHasta, 'setResumenPeriodo')}
+
     <div class="metrics-grid">
       <div class="metric-card ${beneficio>=0?'accent-green':'accent-red'}">
-        <div class="m-label">Beneficio neto</div><div class="m-value">${fmt(beneficio)}</div><div class="m-sub">Período registrado</div>
+        <div class="m-label">Beneficio neto</div><div class="m-value">${fmt(beneficio)}</div><div class="m-sub">${totalPlatos} platos vendidos</div>
       </div>
       <div class="metric-card">
-        <div class="m-label">Ventas totales</div><div class="m-value">${fmt(totalVentas)}</div><div class="m-sub">${totalPlatos} platos vendidos</div>
+        <div class="m-label">Ventas totales</div><div class="m-value">${fmt(totalVentas)}</div><div class="m-sub">Ingreso bruto</div>
       </div>
       <div class="metric-card accent-amber">
         <div class="m-label">Coste ingredientes</div><div class="m-value">${fmt(totalCosto)}</div><div class="m-sub">${fmtN(totalVentas>0?(totalCosto/totalVentas)*100:0)}% sobre ventas</div>
@@ -915,7 +989,10 @@ function renderResumen() {
       <div class="card-header"><h2>Rentabilidad por plato</h2></div>
       <div class="card-body no-pad">
         <table>
-          <thead><tr><th>Plato</th><th>Uds.</th><th>Coste/ud</th><th>PVP</th><th style="min-width:160px">Margen</th><th>Beneficio total</th></tr></thead>
+          <thead><tr>
+            <th>Plato</th><th>Uds.</th><th>Coste/ud</th><th>PVP</th>
+            <th style="min-width:160px">Margen</th><th>Beneficio total</th>
+          </tr></thead>
           <tbody>${porReceta.map(r=>{
             const mc=margenClass(r.mg);
             return `<tr>
@@ -970,20 +1047,54 @@ function renderVentas() {
       </div>
     </div>
 
-    ${state.ventas.length>0 ? `
-    <div class="card">
-      <div class="card-header"><h2>Historial de ventas</h2><button class="btn sm danger" onclick="limpiarVentas()">Limpiar todo</button></div>
-      <div class="card-body no-pad">
-        <table>
-          <thead><tr><th>Plato</th><th>Uds.</th><th>Ingresos</th><th>Coste</th><th>Beneficio</th><th></th></tr></thead>
-          <tbody>${[...state.ventas].reverse().map(v=>{
-            const r=state.recetas.find(x=>x.id===v.recetaId); if(!r) return '';
-            const ing=r.pvp*v.unidades, cos=costoReceta(r)*v.unidades;
-            return `<tr><td style="font-weight:500">${r.nombre}</td><td class="mono">${v.unidades}</td><td class="mono">${fmt(ing)}</td><td class="mono">${fmt(cos)}</td><td class="mono" style="font-weight:600;color:var(--teal)">${fmt(ing-cos)}</td><td><button class="btn sm danger" onclick="eliminarVenta(${JSON.stringify(v.id)})">✕</button></td></tr>`;
-          }).join('')}</tbody>
-        </table>
-      </div>
-    </div>` : '<div class="empty-state" style="padding:40px"><div class="emoji">💰</div>Aún no hay ventas registradas</div>'}
+    ${state.ventas.length>0 ? (()=>{
+      let vf = filtrarPorPeriodo(state.ventas, ventasPeriodo, ventasFechaDesde, ventasFechaHasta);
+
+      // Sort
+      vf = [...vf].sort((a,b)=>{
+        let va,vb;
+        const ra=state.recetas.find(x=>x.id===a.recetaId), rb=state.recetas.find(x=>x.id===b.recetaId);
+        if(ventasSortField==='nombre'){ va=(ra?.nombre||'').toLowerCase(); vb=(rb?.nombre||'').toLowerCase(); }
+        else if(ventasSortField==='unidades'){ va=a.unidades; vb=b.unidades; }
+        else if(ventasSortField==='ingreso'){ va=(ra?.pvp||0)*a.unidades; vb=(rb?.pvp||0)*b.unidades; }
+        else { va=a.createdAt||''; vb=b.createdAt||''; }
+        if(va<vb) return ventasSortDir==='asc'?-1:1;
+        if(va>vb) return ventasSortDir==='asc'?1:-1;
+        return 0;
+      });
+
+      const stv=(f,l)=>`<th style="cursor:pointer;user-select:none" onclick="setVentasSort('${f}')">${l}${ventasSortField===f?(ventasSortDir==='asc'?' ↑':' ↓'):''}</th>`;
+      const totalIng=vf.reduce((s,v)=>{const r=state.recetas.find(x=>x.id===v.recetaId);return s+(r?r.pvp*v.unidades:0);},0);
+
+      return `<div class="card">
+        <div class="card-header" style="flex-wrap:wrap;gap:8px">
+          <h2>Historial de ventas</h2>
+          <div style="flex:1">
+            ${periodFilterHTML(ventasPeriodo, ventasFechaDesde, ventasFechaHasta, 'setVentasPeriodo').replace('margin-bottom:16px','margin-bottom:0')}
+          </div>
+          <button class="btn sm danger" onclick="limpiarVentas()">Limpiar todo</button>
+        </div>
+        <div class="card-body" style="padding:10px 20px;background:var(--surface2);border-bottom:1px solid var(--border)">
+          <div style="display:flex;gap:20px;flex-wrap:wrap">
+            <div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Ventas</span><br><strong>${vf.reduce((s,v)=>s+v.unidades,0)} platos</strong></div>
+            <div><span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Ingresos</span><br><strong style="color:var(--teal)">${fmt(totalIng)}</strong></div>
+          </div>
+        </div>
+        <div class="card-body no-pad">
+          <table>
+            <thead><tr>${stv('nombre','Plato')}${stv('unidades','Uds.')}${stv('ingreso','Ingresos')}<th>Coste</th><th>Beneficio</th>${stv('fecha','Fecha')}<th></th></tr></thead>
+            <tbody>${vf.length===0?`<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas en este período</td></tr>`:
+              vf.map(v=>{
+                const r=state.recetas.find(x=>x.id===v.recetaId); if(!r) return '';
+                const ing=r.pvp*v.unidades, cos=costoReceta(r)*v.unidades;
+                const fecha=v.createdAt?new Date(v.createdAt).toLocaleDateString('es-ES'):'';
+                return `<tr><td style="font-weight:500">${r.nombre}</td><td class="mono">${v.unidades}</td><td class="mono">${fmt(ing)}</td><td class="mono">${fmt(cos)}</td><td class="mono" style="font-weight:600;color:var(--teal)">${fmt(ing-cos)}</td><td style="font-size:12px;color:var(--text3)">${fecha}</td><td><button class="btn sm danger" onclick="eliminarVenta(${JSON.stringify(v.id)})">✕</button></td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    })() : '<div class="empty-state" style="padding:40px"><div class="emoji">💰</div>Aún no hay ventas registradas</div>'}
   `;
 }
 
@@ -1081,7 +1192,7 @@ async function registrarVenta() {
       stockUpdates.push({id:p.id, cantidad:p.cantidad});
     }
   });
-  const venta = {id:uid(), recetaId, unidades};
+  const venta = {id:uid(), recetaId, unidades, createdAt: new Date().toISOString()};
   state.ventas.push(venta);
   renderVentas();
   await dbAddVenta(venta, stockUpdates);
@@ -1360,12 +1471,33 @@ function renderRecetas() {
   const pg = document.getElementById('page-recetas');
   document.getElementById('topbar-actions').innerHTML = `<button class="btn primary" onclick="showModalReceta(null)">+ Nueva receta</button>`;
 
-  const filtradas=state.recetas.filter(r=>recetasCatFilter==='Todos'||r.categoria===recetasCatFilter);
+  let filtradas=state.recetas.filter(r=>recetasCatFilter==='Todos'||r.categoria===recetasCatFilter);
+
+  // Ordenación
+  filtradas=[...filtradas].sort((a,b)=>{
+    let va,vb;
+    if(recetasSortField==='margen'){ va=margenReceta(a); vb=margenReceta(b); }
+    else if(recetasSortField==='pvp'){ va=a.pvp; vb=b.pvp; }
+    else if(recetasSortField==='coste'){ va=costoReceta(a); vb=costoReceta(b); }
+    else { va=a.nombre.toLowerCase(); vb=b.nombre.toLowerCase(); }
+    if(va<vb) return recetasSortDir==='asc'?-1:1;
+    if(va>vb) return recetasSortDir==='asc'?1:-1;
+    return 0;
+  });
+
+  const sortBtn=(f,label)=>`<button class="btn sm" onclick="setRecetasSort('${f}')" style="${recetasSortField===f?'background:var(--amber-bg);border-color:var(--amber-border);color:var(--amber)':''}">${label} ${recetasSortField===f?(recetasSortDir==='asc'?'↑':'↓'):''}</button>`;
+
   pg.innerHTML = `
-    <div style="margin-bottom:16px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
       <div class="filter-tabs">
         <div class="filter-tab ${recetasCatFilter==='Todos'?'active':''}" onclick="setRecetasCat('Todos')">Todo</div>
         ${getCategorias().map(c=>`<div class="filter-tab ${recetasCatFilter===c?'active':''}" onclick="setRecetasCat('${c}')">${c}</div>`).join('')}
+      </div>
+      <div style="display:flex;gap:4px;margin-left:auto">
+        ${sortBtn('nombre','A-Z')}
+        ${sortBtn('margen','Margen')}
+        ${sortBtn('pvp','PVP')}
+        ${sortBtn('coste','Coste')}
       </div>
     </div>
     ${filtradas.length===0 ? `<div class="empty-state"><div class="emoji">🍽</div>No hay recetas en esta categoría</div>` : `
@@ -1410,6 +1542,11 @@ function renderRecetas() {
 }
 
 function setRecetasCat(cat) { recetasCatFilter=cat; renderRecetas(); }
+function setRecetasSort(f) {
+  if(recetasSortField===f) recetasSortDir=recetasSortDir==='asc'?'desc':'asc';
+  else { recetasSortField=f; recetasSortDir=f==='nombre'?'asc':'desc'; }
+  renderRecetas();
+}
 
 async function eliminarReceta(id) {
   if(!confirm('¿Eliminar esta receta?')) return;
