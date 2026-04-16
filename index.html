@@ -1148,18 +1148,46 @@ function importarCSVVentas(event) {
   const file = event.target.files[0]; if(!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const text = e.target.result;
-    const delim = text.includes('\t') ? '\t' : text.includes(';') ? ';' : ',';
+    // Quitar BOM (Excel lo añade en UTF-8 y rompe la primera columna)
+    const text = e.target.result.replace(/^\uFEFF/, '');
+
+    // Detectar delimitador: tabulación > punto y coma > coma
+    const firstLine = text.split(/\r?\n/)[0] || '';
+    const delim = firstLine.includes('\t') ? '\t' : firstLine.includes(';') ? ';' : ',';
+
     const lines = text.split(/\r?\n/).filter(l=>l.trim());
     if(lines.length < 2) { alert('El archivo parece vacío'); return; }
 
-    const header = lines[0].split(delim).map(h=>h.trim().toLowerCase().replace(/['"]/g,''));
-    const nameIdx = header.findIndex(h=>['producto','artículo','articulo','nombre','plato','descripcion','descripción','item'].some(k=>h.includes(k)));
-    const qtyIdx  = header.findIndex(h=>['cantidad','uds','unidades','qty','vendido','vendidas','total'].some(k=>h.includes(k)));
+    // Normalizar cabeceras: minúsculas, sin comillas, sin tildes
+    const norm = s => s.trim().toLowerCase().replace(/['"]/g,'')
+      .replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
+      .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
+
+    const header = lines[0].split(delim).map(norm);
+
+    // Columna de nombre: busca 'nombre' primero, luego sinónimos
+    const nameKeys = ['nombre','producto','articulo','plato','descripcion','item','concepto'];
+    const nameIdx  = header.findIndex(h => nameKeys.some(k => h.includes(k)));
+
+    // Columna de cantidad: 'unidades' primero; evita 'importe'/'precio'/'total' con importe
+    const qtyIdx = (() => {
+      const strictKeys = ['unidades','cantidad','uds','qty','vendido','vendidas','unid'];
+      let idx = header.findIndex(h => strictKeys.some(k => h.includes(k)));
+      if (idx === -1) {
+        // fallback: 'total' solo si no hay 'importe' en ese encabezado
+        idx = header.findIndex(h => h.includes('total') && !h.includes('importe'));
+      }
+      return idx;
+    })();
 
     const preview = document.getElementById('csv-preview');
     if(nameIdx===-1||qtyIdx===-1) {
-      preview.innerHTML = `<div class="alert danger">No se detectaron columnas de nombre y cantidad. Columnas encontradas: <strong>${header.join(', ')}</strong><br>El archivo debe tener una columna con "producto/artículo/plato" y otra con "cantidad/uds".</div>`;
+      preview.innerHTML = `<div class="alert danger">
+        No se detectaron las columnas correctas.<br>
+        <strong>Columnas encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}<br>
+        <strong>Necesito:</strong> una con "nombre/producto" y otra con "unidades/cantidad".<br>
+        Si el archivo es .xlsx, expórtalo como CSV desde Excel primero.
+      </div>`;
       return;
     }
 
