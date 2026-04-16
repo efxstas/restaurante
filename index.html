@@ -347,6 +347,7 @@
       <div class="nav-item"        onclick="showPage('stock')"     id="nav-stock"><span class="icon">📦</span> Stock</div>
       <div class="nav-item"        onclick="showPage('recetas')"   id="nav-recetas"><span class="icon">🍽</span> Recetas</div>
       <div class="nav-item"        onclick="showPage('ventas')"    id="nav-ventas"><span class="icon">💰</span> Ventas</div>
+      <div class="nav-item"        onclick="showPage('optim')"     id="nav-optim"><span class="icon">🔍</span> Optimización</div>
       <div class="nav-section" style="margin-top:8px">Entradas</div>
       <div class="nav-item"        onclick="showPage('albaranes')" id="nav-albaranes"><span class="icon">🧾</span> Albaranes</div>
       <div class="nav-section" id="nav-section-admin" style="margin-top:8px;display:none">Sistema</div>
@@ -381,6 +382,7 @@
       <div id="page-recetas"   class="page"></div>
       <div id="page-ventas"    class="page"></div>
       <div id="page-albaranes" class="page"></div>
+      <div id="page-optim"     class="page"></div>
       <div id="page-jefe"      class="page"></div>
       <div id="page-admin"     class="page"></div>
     </div>
@@ -869,7 +871,7 @@ function closeSidebar() {
 }
 
 // ─── NAV ──────────────────────────────────────────────────────
-const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', ventas:'Ventas', albaranes:'Albaranes', jefe:'Mis Locales', admin:'Panel Admin' };
+const pageTitles = { resumen:'Resumen', stock:'Stock', recetas:'Recetas', ventas:'Ventas', optim:'Optimización', albaranes:'Albaranes', jefe:'Mis Locales', admin:'Panel Admin' };
 
 function showPage(name) {
   // Protección por rol
@@ -888,6 +890,7 @@ function showPage(name) {
   if (name==='recetas')   renderRecetas();
   if (name==='ventas')    renderVentas();
   if (name==='albaranes') renderAlbaranes();
+  if (name==='optim')     renderOptim();
   if (name==='jefe')      renderJefe();
   if (name==='admin')     renderAdmin();
 }
@@ -1669,6 +1672,167 @@ async function guardarReceta(id) {
   }
   closeModal(); renderRecetas();
   await dbSaveReceta(receta);
+}
+
+// ─── OPTIMIZACIÓN ─────────────────────────────────────────────
+function renderOptim() {
+  const pg = document.getElementById('page-optim');
+
+  // ── Cálculos globales ──────────────────────────────────────
+  const valorStock = state.stock.reduce((s,p) => s + p.cantidad * p.precioUnd, 0);
+
+  // Total gastado en albaranes (suma de todas las líneas)
+  const totalAlbaranes = state.albaranes.reduce((s,a) =>
+    s + (a.lineas||[]).reduce((ls,l) => ls + (l.cantidad||0) * (l.precioUnd||0), 0), 0);
+
+  const pctStock = totalAlbaranes > 0 ? (valorStock / totalAlbaranes) * 100 : null;
+  const necesitasPedir = totalAlbaranes - valorStock; // € a pedir para volver al nivel histórico
+
+  // Color del gauge
+  const gaugeColor = pctStock === null ? 'var(--text3)'
+    : pctStock < 20 ? '#ef4444'
+    : pctStock < 40 ? '#f59e0b'
+    : '#22c55e';
+
+  // ── Productos críticos (< 20% mínimo o agotados) ──────────
+  // Para cada producto, calculamos cuánto se ha comprado históricamente vía albaranes
+  // haciendo fuzzy match nombre stock vs nombre línea albaran
+  const historialCompra = {}; // stockId → total cantidad comprada
+  state.stock.forEach(p => {
+    const nombreN = p.nombre.toLowerCase();
+    let total = 0;
+    state.albaranes.forEach(a => {
+      (a.lineas||[]).forEach(l => {
+        const ln = (l.nombre||'').toLowerCase();
+        if (ln === nombreN || ln.includes(nombreN) || nombreN.includes(ln)) {
+          total += l.cantidad || 0;
+        }
+      });
+    });
+    historialCompra[p.id] = total;
+  });
+
+  // Producto crítico: cantidad actual < 20% del historial comprado, o bajo su mínimo
+  const criticos = state.stock.filter(p => {
+    const hist = historialCompra[p.id];
+    const bajoPct = hist > 0 && (p.cantidad / hist) < 0.20;
+    const bajoMin = p.minimo > 0 && p.cantidad <= p.minimo;
+    const agotado = p.cantidad <= 0;
+    return agotado || bajoPct || bajoMin;
+  }).sort((a,b) => {
+    // Agotados primero
+    if (a.cantidad <= 0 && b.cantidad > 0) return -1;
+    if (b.cantidad <= 0 && a.cantidad > 0) return 1;
+    return a.cantidad - b.cantidad;
+  });
+
+  // ── Márgenes por plato ─────────────────────────────────────
+  const margenes = state.recetas.map(r => {
+    const coste = r.ingredientes.reduce((s,ing) => {
+      const p = state.stock.find(x => x.id === ing.stockId);
+      return s + (p ? p.precioUnd * ing.cantidad : 0);
+    }, 0);
+    const margen = r.pvp > 0 ? ((r.pvp - coste) / r.pvp) * 100 : null;
+    const unidsVendidas = state.ventas.filter(v => v.recetaId === r.id).reduce((s,v) => s+v.unidades, 0);
+    return { nombre: r.nombre, pvp: r.pvp, coste, margen, unidsVendidas };
+  }).filter(r => r.pvp > 0).sort((a,b) => (b.margen||0) - (a.margen||0));
+
+  const margenColor = m => m === null ? 'var(--text3)' : m >= 50 ? '#22c55e' : m >= 25 ? '#f59e0b' : '#ef4444';
+  const margenLabel = m => m === null ? 'Sin PVP' : m >= 50 ? 'Bueno' : m >= 25 ? 'Ajustado' : 'Bajo';
+
+  // ── Render ─────────────────────────────────────────────────
+  pg.innerHTML = `
+    <div style="display:grid;gap:20px">
+
+      <!-- GAUGE GLOBAL -->
+      <div class="card">
+        <div class="card-header"><h2>Salud del stock</h2></div>
+        <div class="card-body">
+          ${totalAlbaranes === 0
+            ? `<div style="color:var(--text3);font-size:14px">Sin albaranes registrados aún. Cuando introduzcas compras, aquí verás el nivel de stock respecto a tu inversión histórica.</div>`
+            : `
+              <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+                <div>
+                  <div style="font-size:28px;font-weight:700;color:${gaugeColor}">${pctStock!==null?pctStock.toFixed(1):'—'}%</div>
+                  <div style="font-size:13px;color:var(--text2)">del stock respecto al total invertido en compras</div>
+                </div>
+                <div style="text-align:right;font-size:13px;color:var(--text2)">
+                  <div>Invertido en albaranes: <strong style="color:var(--text)">${fmt(totalAlbaranes)}</strong></div>
+                  <div>Valor actual en stock: <strong style="color:var(--text)">${fmt(valorStock)}</strong></div>
+                  ${pctStock < 40 && necesitasPedir > 0 ? `<div style="margin-top:4px;color:#f59e0b">Estimación de pedido para reponer: <strong>${fmt(necesitasPedir)}</strong></div>` : ''}
+                </div>
+              </div>
+              <div style="height:14px;background:var(--surface2);border-radius:8px;overflow:hidden">
+                <div style="height:100%;width:${Math.min(pctStock,100).toFixed(1)}%;background:${gaugeColor};border-radius:8px;transition:width .4s"></div>
+              </div>
+              ${pctStock < 20 ? `<div style="margin-top:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-sm);color:#dc2626;font-size:13px;font-weight:500">
+                ⚠️ Stock crítico — llevas consumido más del 80% de tu inversión histórica. Revisa los pedidos pendientes.
+              </div>` : pctStock < 40 ? `<div style="margin-top:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius-sm);color:#92400e;font-size:13px">
+                ⚡ Stock bajo — menos del 40% restante. Considera hacer un pedido pronto.
+              </div>` : ''}
+            `}
+        </div>
+      </div>
+
+      <!-- PRODUCTOS CRÍTICOS -->
+      <div class="card">
+        <div class="card-header">
+          <h2>Productos que necesitan reposición</h2>
+          <span style="font-size:12px;color:var(--text3)">${criticos.length} producto${criticos.length!==1?'s':''}</span>
+        </div>
+        <div class="card-body">
+          ${criticos.length === 0
+            ? `<div style="color:var(--text3);font-size:14px">✓ Todos los productos están por encima del 20% de stock histórico.</div>`
+            : `<table>
+                <thead><tr>
+                  <th>Producto</th><th>Categoría</th><th>Cantidad actual</th><th>Histórico comprado</th><th>% restante</th><th>Estado</th>
+                </tr></thead>
+                <tbody>${criticos.map(p => {
+                  const hist = historialCompra[p.id];
+                  const pct = hist > 0 ? (p.cantidad / hist * 100) : null;
+                  const color = p.cantidad <= 0 ? '#ef4444' : pct !== null && pct < 20 ? '#ef4444' : '#f59e0b';
+                  const label = p.cantidad <= 0 ? 'Agotado' : pct !== null && pct < 20 ? 'Crítico (<20%)' : 'Bajo mínimo';
+                  return `<tr>
+                    <td style="font-weight:500">${p.nombre}</td>
+                    <td><span class="cat-badge">${p.categoria}</span></td>
+                    <td class="mono">${fmtQty(p.cantidad)} ${p.unidad}</td>
+                    <td class="mono">${hist > 0 ? fmtQty(hist)+' '+p.unidad : '—'}</td>
+                    <td class="mono" style="color:${color}">${pct !== null ? pct.toFixed(1)+'%' : '—'}</td>
+                    <td><span style="font-size:11px;font-weight:600;color:${color}">${label}</span></td>
+                  </tr>`;
+                }).join('')}</tbody>
+              </table>`}
+        </div>
+      </div>
+
+      <!-- MÁRGENES POR PLATO -->
+      <div class="card">
+        <div class="card-header"><h2>Márgenes por plato</h2></div>
+        <div class="card-body">
+          ${margenes.length === 0
+            ? `<div style="color:var(--text3);font-size:14px">Sin recetas con PVP definido aún.</div>`
+            : `<table>
+                <thead><tr>
+                  <th>Plato</th><th>PVP</th><th>Coste ingredientes</th><th>Beneficio/ud</th><th>Margen</th><th>Uds. vendidas</th>
+                </tr></thead>
+                <tbody>${margenes.map(r => `<tr>
+                  <td style="font-weight:500">${r.nombre}</td>
+                  <td class="mono">${fmt(r.pvp)}</td>
+                  <td class="mono">${fmt(r.coste)}</td>
+                  <td class="mono">${fmt(r.pvp - r.coste)}</td>
+                  <td>
+                    <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${margenColor(r.margen)}22;color:${margenColor(r.margen)}">
+                      ${r.margen !== null ? r.margen.toFixed(1)+'%' : '—'} · ${margenLabel(r.margen)}
+                    </span>
+                  </td>
+                  <td class="mono">${r.unidsVendidas}</td>
+                </tr>`).join('')}</tbody>
+              </table>`}
+        </div>
+      </div>
+
+    </div>
+  `;
 }
 
 // ─── ALBARANES ────────────────────────────────────────────────
