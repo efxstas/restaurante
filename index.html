@@ -6,6 +6,7 @@
   <title>RestaurantOS — MVP</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -1146,90 +1147,89 @@ function renderVentas() {
 
 function importarCSVVentas(event) {
   const file = event.target.files[0]; if(!file) return;
+  const isXlsx = /\.xlsx?$/i.test(file.name);
   const reader = new FileReader();
-  reader.onload = e => {
-    // Quitar BOM (Excel lo añade en UTF-8 y rompe la primera columna)
-    const text = e.target.result.replace(/^\uFEFF/, '');
 
-    // Detectar delimitador: tabulación > punto y coma > coma
-    const firstLine = text.split(/\r?\n/)[0] || '';
-    const delim = firstLine.includes('\t') ? '\t' : firstLine.includes(';') ? ';' : ',';
+  const norm = s => String(s).trim().toLowerCase().replace(/['"]/g,'')
+    .replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
+    .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
 
-    const lines = text.split(/\r?\n/).filter(l=>l.trim());
-    if(lines.length < 2) { alert('El archivo parece vacío'); return; }
+  const detectCols = header => {
+    const nameIdx = header.findIndex(h => ['nombre','producto','articulo','plato','descripcion','item','concepto'].some(k=>h.includes(k)));
+    let qtyIdx = header.findIndex(h => ['unidades','cantidad','uds','qty','vendido','vendidas','unid'].some(k=>h.includes(k)));
+    if (qtyIdx===-1) qtyIdx = header.findIndex(h => h.includes('total') && !h.includes('importe'));
+    return {nameIdx, qtyIdx};
+  };
 
-    // Normalizar cabeceras: minúsculas, sin comillas, sin tildes
-    const norm = s => s.trim().toLowerCase().replace(/['"]/g,'')
-      .replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
-      .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
-
-    const header = lines[0].split(delim).map(norm);
-
-    // Columna de nombre: busca 'nombre' primero, luego sinónimos
-    const nameKeys = ['nombre','producto','articulo','plato','descripcion','item','concepto'];
-    const nameIdx  = header.findIndex(h => nameKeys.some(k => h.includes(k)));
-
-    // Columna de cantidad: 'unidades' primero; evita 'importe'/'precio'/'total' con importe
-    const qtyIdx = (() => {
-      const strictKeys = ['unidades','cantidad','uds','qty','vendido','vendidas','unid'];
-      let idx = header.findIndex(h => strictKeys.some(k => h.includes(k)));
-      if (idx === -1) {
-        // fallback: 'total' solo si no hay 'importe' en ese encabezado
-        idx = header.findIndex(h => h.includes('total') && !h.includes('importe'));
-      }
-      return idx;
-    })();
-
-    const preview = document.getElementById('csv-preview');
-    if(nameIdx===-1||qtyIdx===-1) {
-      preview.innerHTML = `<div class="alert danger">
-        No se detectaron las columnas correctas.<br>
-        <strong>Columnas encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}<br>
-        <strong>Necesito:</strong> una con "nombre/producto" y otra con "unidades/cantidad".<br>
-        Si el archivo es .xlsx, expórtalo como CSV desde Excel primero.
-      </div>`;
-      return;
-    }
-
-    const pendientes = [];
-    for(let i=1; i<lines.length; i++){
-      const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
-      const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
-      if(!nombre||qty<=0) continue;
-      const receta=state.recetas.find(r=>r.nombre.toLowerCase()===nombre.toLowerCase())
-                || state.recetas.find(r=>nombre.toLowerCase().includes(r.nombre.toLowerCase()))
-                || state.recetas.find(r=>r.nombre.toLowerCase().includes(nombre.toLowerCase()));
-      pendientes.push({nombre, qty, receta});
-    }
-
-    if(pendientes.length===0){preview.innerHTML='<div class="alert warn">No se encontraron filas válidas</div>';return;}
-
-    window._csvPendientes = pendientes; // guardado para confirmarImportCSV
+  const showPreview = rawRows => {
+    if (!rawRows.length) { document.getElementById('csv-preview').innerHTML='<div class="alert warn">No se encontraron filas válidas</div>'; return; }
+    const pendientes = rawRows.map(r => {
+      const receta = state.recetas.find(x=>x.nombre.toLowerCase()===r.nombre.toLowerCase())
+                  || state.recetas.find(x=>r.nombre.toLowerCase().includes(x.nombre.toLowerCase()))
+                  || state.recetas.find(x=>x.nombre.toLowerCase().includes(r.nombre.toLowerCase()));
+      return {...r, receta};
+    });
+    window._csvPendientes = pendientes;
     const nuevas = pendientes.filter(p=>!p.receta).length;
-    preview.innerHTML = `
+    document.getElementById('csv-preview').innerHTML = `
       <div class="section-label" style="margin-bottom:6px">Vista previa — ${pendientes.length} líneas detectadas</div>
       ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
-        ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente para que puedas añadir sus ingredientes después.
+        ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente.
       </div>`:''}
       <table style="margin-bottom:12px">
-        <thead><tr><th>Nombre en CSV</th><th>Uds.</th><th>Acción</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Uds.</th><th>Acción</th></tr></thead>
         <tbody>${pendientes.map((p,i)=>`<tr>
-          <td>${p.nombre}</td>
-          <td class="mono">${p.qty}</td>
-          <td>
-            <select id="csv-receta-${i}" style="font-size:12px">
-              ${!p.receta?`<option value="__nueva__" selected>✨ Crear receta nueva</option>`:''}
-              <option value="">— No importar —</option>
-              ${state.recetas.map(r=>`<option value="${r.id}" ${p.receta?.id===r.id?'selected':''}>${r.nombre}</option>`).join('')}
-            </select>
-          </td>
+          <td>${p.nombre}</td><td class="mono">${p.qty}</td>
+          <td><select id="csv-receta-${i}" style="font-size:12px">
+            ${!p.receta?`<option value="__nueva__" selected>✨ Crear receta nueva</option>`:''}
+            <option value="">— No importar —</option>
+            ${state.recetas.map(r=>`<option value="${r.id}" ${p.receta?.id===r.id?'selected':''}>${r.nombre}</option>`).join('')}
+          </select></td>
         </tr>`).join('')}</tbody>
       </table>
       <button class="btn primary" onclick="confirmarImportCSV()">✓ Importar ventas</button>
     `;
     event.target.value='';
   };
-  reader.readAsText(file, 'UTF-8');
+
+  reader.onload = e => {
+    const preview = document.getElementById('csv-preview');
+    if (isXlsx) {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (data.length < 2) { alert('El archivo parece vacío'); return; }
+      const header = data[0].map(norm);
+      const {nameIdx, qtyIdx} = detectCols(header);
+      if (nameIdx===-1||qtyIdx===-1) {
+        preview.innerHTML=`<div class="alert danger">No se detectaron columnas correctas.<br><strong>Encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}</div>`;
+        return;
+      }
+      showPreview(data.slice(1).map(r=>({nombre:String(r[nameIdx]||'').trim(),qty:parseInt(r[qtyIdx])||0})).filter(r=>r.nombre&&r.qty>0));
+    } else {
+      const text = e.target.result.replace(/^\uFEFF/,'');
+      const firstLine = text.split(/\r?\n/)[0]||'';
+      const delim = firstLine.includes('\t')?'\t':firstLine.includes(';')?';':',';
+      const lines = text.split(/\r?\n/).filter(l=>l.trim());
+      if (lines.length<2) { alert('El archivo parece vacío'); return; }
+      const header = lines[0].split(delim).map(norm);
+      const {nameIdx, qtyIdx} = detectCols(header);
+      if (nameIdx===-1||qtyIdx===-1) {
+        preview.innerHTML=`<div class="alert danger">No se detectaron columnas correctas.<br><strong>Encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}</div>`;
+        return;
+      }
+      const rawRows=[];
+      for(let i=1;i<lines.length;i++){
+        const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
+        const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
+        if(nombre&&qty>0) rawRows.push({nombre,qty});
+      }
+      showPreview(rawRows);
+    }
+  };
+
+  if (isXlsx) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file, 'UTF-8');
 }
 
 async function confirmarImportCSV() {
