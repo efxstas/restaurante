@@ -827,6 +827,47 @@ async function dbClearVentas() {
   await sb.from('ventas').delete().eq('restaurante_id', currentRestaurant.id);
 }
 
+async function resetDatos() {
+  const rid = currentRestaurant.id;
+  // Ventas
+  await sb.from('ventas').delete().eq('restaurante_id', rid);
+  // Albaranes y sus líneas (cascade borra líneas automáticamente)
+  await sb.from('albaranes').delete().eq('restaurante_id', rid);
+  // Stock: poner cantidades a 0 (conserva nombres, categorías, unidades, mínimos)
+  if (state.stock.length > 0) {
+    await Promise.all(state.stock.map(p =>
+      sb.from('stock').update({ cantidad: 0 }).eq('id', p.id)
+    ));
+  }
+  // Actualizar estado local
+  state.ventas   = [];
+  state.albaranes= [];
+  state.stock    = state.stock.map(p => ({ ...p, cantidad: 0 }));
+}
+
+async function confirmarReset() {
+  const ventas   = state.ventas.length;
+  const albaranes= state.albaranes.length;
+  const ok = confirm(
+    `¿Seguro que quieres reiniciar los datos de "${currentRestaurant.nombre}"?\n\n` +
+    `Se borrarán:\n• ${ventas} venta${ventas!==1?'s':''}\n• ${albaranes} albarán${albaranes!==1?'es':''}\n• Cantidades de stock (a 0)\n\n` +
+    `Las recetas y sus ingredientes NO se tocan.\n\nEsta acción no se puede deshacer.`
+  );
+  if (!ok) return;
+  const confirmText = prompt('Escribe REINICIAR para confirmar:');
+  if (confirmText !== 'REINICIAR') { alert('Reinicio cancelado.'); return; }
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Reiniciando…';
+  try {
+    await resetDatos();
+    alert('✓ Datos reiniciados. Las recetas están intactas.');
+    renderOptim();
+  } catch(e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false; btn.textContent = 'Reiniciar datos del restaurante';
+  }
+}
+
 // ─── DB: ALBARANES ────────────────────────────────────────────
 async function dbSaveAlbaran(albaran, stockUpdates) {
   await sb.from('albaranes').insert({
@@ -1828,6 +1869,39 @@ function renderOptim() {
                   <td class="mono">${r.unidsVendidas}</td>
                 </tr>`).join('')}</tbody>
               </table>`}
+        </div>
+      </div>
+
+      <!-- ZONA DE REINICIO -->
+      <div class="card" style="border:1px solid #fecaca">
+        <div class="card-header" style="border-bottom-color:#fecaca">
+          <h2 style="color:#dc2626">⚠️ Reinicio de datos</h2>
+        </div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--text2);margin-bottom:12px">
+            Usa esto cuando quieras empezar un nuevo periodo limpio. Borra ventas, albaranes y pone el stock a 0,
+            pero <strong>conserva todas las recetas con sus ingredientes y porciones</strong>.
+          </p>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;font-size:12px">
+            <div style="padding:10px;background:#fef2f2;border-radius:var(--radius-sm);text-align:center">
+              <div style="font-size:18px;margin-bottom:4px">🗑</div>
+              <div style="font-weight:600;color:#dc2626">Se borra</div>
+              <div style="color:var(--text2);margin-top:4px">Ventas · Albaranes · Cantidades de stock</div>
+            </div>
+            <div style="padding:10px;background:#f0fdf4;border-radius:var(--radius-sm);text-align:center">
+              <div style="font-size:18px;margin-bottom:4px">✅</div>
+              <div style="font-weight:600;color:#16a34a">Se conserva</div>
+              <div style="color:var(--text2);margin-top:4px">Recetas · Ingredientes · Porciones · Proveedores</div>
+            </div>
+            <div style="padding:10px;background:#fffbeb;border-radius:var(--radius-sm);text-align:center">
+              <div style="font-size:18px;margin-bottom:4px">📦</div>
+              <div style="font-weight:600;color:#92400e">Stock</div>
+              <div style="color:var(--text2);margin-top:4px">Nombres y categorías se conservan, cantidades → 0</div>
+            </div>
+          </div>
+          <button class="btn" style="background:#dc2626;color:#fff;border-color:#dc2626" onclick="confirmarReset()">
+            Reiniciar datos del restaurante
+          </button>
         </div>
       </div>
 
