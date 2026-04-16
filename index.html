@@ -789,19 +789,28 @@ async function dbUpdateStockCantidad(id, cantidad) {
 
 // ─── DB: RECETAS ──────────────────────────────────────────────
 async function dbSaveReceta(r) {
-  await sb.from('recetas').upsert({
+  const {error:e1} = await sb.from('recetas').upsert({
     id: r.id, restaurante_id: currentRestaurant.id,
     nombre: r.nombre, categoria: r.categoria, pvp: r.pvp,
   });
-  await sb.from('receta_ingredientes').delete().eq('receta_id', r.id);
+  if (e1) throw new Error('Receta: ' + e1.message);
+  const {error:e2} = await sb.from('receta_ingredientes').delete().eq('receta_id', r.id);
+  if (e2) throw new Error('Borrar ingredientes: ' + e2.message);
   if (r.ingredientes.length > 0) {
-    await sb.from('receta_ingredientes').insert(
+    const {error:e3} = await sb.from('receta_ingredientes').insert(
       r.ingredientes.map(ing => ({ id: uid(), receta_id: r.id, stock_id: ing.stockId, cantidad: ing.cantidad }))
     );
+    if (e3) throw new Error('Guardar ingredientes: ' + e3.message);
   }
 }
 async function dbDeleteReceta(id) {
-  await sb.from('recetas').delete().eq('id', id);
+  const {error} = await sb.from('recetas').delete().eq('id', id);
+  if (error) throw new Error('Eliminar receta: ' + error.message);
+}
+async function dbDeleteAllRecetas() {
+  const rid = currentRestaurant.id;
+  const {error} = await sb.from('recetas').delete().eq('restaurante_id', rid);
+  if (error) throw new Error('Eliminar recetas: ' + error.message);
 }
 
 // ─── DB: VENTAS ───────────────────────────────────────────────
@@ -866,6 +875,25 @@ async function confirmarReset() {
   } catch(e) {
     alert('Error: ' + e.message);
     btn.disabled = false; btn.textContent = 'Reiniciar datos del restaurante';
+  }
+}
+
+async function confirmarBorrarRecetas() {
+  const n = state.recetas.length;
+  if (n === 0) { alert('No hay recetas que borrar.'); return; }
+  if (!confirm(`¿Borrar las ${n} recetas de "${currentRestaurant.nombre}"?\nSe borrarán también sus ingredientes.\nLas ventas que las referencien quedarán sin receta.\n\nEsta acción no se puede deshacer.`)) return;
+  const confirmText = prompt('Escribe BORRAR para confirmar:');
+  if (confirmText !== 'BORRAR') { alert('Cancelado.'); return; }
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Borrando…';
+  try {
+    await dbDeleteAllRecetas();
+    state.recetas = [];
+    alert(`✓ ${n} receta${n!==1?'s':''} eliminada${n!==1?'s':''}.`);
+    renderOptim();
+  } catch(e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false; btn.textContent = '🗑 Borrar todas las recetas';
   }
 }
 
@@ -1677,9 +1705,11 @@ function setRecetasSort(f) {
 
 async function eliminarReceta(id) {
   if(!confirm('¿Eliminar esta receta?')) return;
-  state.recetas=state.recetas.filter(x=>x.id!==id);
-  renderRecetas();
-  await dbDeleteReceta(id);
+  try {
+    await dbDeleteReceta(id);
+    state.recetas=state.recetas.filter(x=>x.id!==id);
+    renderRecetas();
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 function showModalReceta(id) {
@@ -1959,9 +1989,14 @@ function renderOptim() {
               <div style="color:var(--text2);margin-top:4px">Nombres y categorías se conservan, cantidades → 0</div>
             </div>
           </div>
-          <button class="btn" style="background:#dc2626;color:#fff;border-color:#dc2626" onclick="confirmarReset()">
-            Reiniciar datos del restaurante
-          </button>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" style="background:#dc2626;color:#fff;border-color:#dc2626" onclick="confirmarReset()">
+              Reiniciar datos del restaurante
+            </button>
+            <button class="btn" style="background:#7f1d1d;color:#fff;border-color:#7f1d1d" onclick="confirmarBorrarRecetas()">
+              🗑 Borrar todas las recetas
+            </button>
+          </div>
         </div>
       </div>
 
