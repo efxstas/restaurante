@@ -1105,12 +1105,10 @@ function importarCSVVentas(event) {
   const reader = new FileReader();
   reader.onload = e => {
     const text = e.target.result;
-    // Detectar delimitador
     const delim = text.includes('\t') ? '\t' : text.includes(';') ? ';' : ',';
     const lines = text.split(/\r?\n/).filter(l=>l.trim());
     if(lines.length < 2) { alert('El archivo parece vacío'); return; }
 
-    // Detectar columnas: buscar índices de nombre y cantidad
     const header = lines[0].split(delim).map(h=>h.trim().toLowerCase().replace(/['"]/g,''));
     const nameIdx = header.findIndex(h=>['producto','artículo','articulo','nombre','plato','descripcion','descripción','item'].some(k=>h.includes(k)));
     const qtyIdx  = header.findIndex(h=>['cantidad','uds','unidades','qty','vendido','vendidas','total'].some(k=>h.includes(k)));
@@ -1121,10 +1119,8 @@ function importarCSVVentas(event) {
       return;
     }
 
-    // Procesar filas
     const pendientes = [];
-    const startRow = 1; // saltar cabecera
-    for(let i=startRow; i<lines.length; i++){
+    for(let i=1; i<lines.length; i++){
       const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
       const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
       if(!nombre||qty<=0) continue;
@@ -1136,49 +1132,77 @@ function importarCSVVentas(event) {
 
     if(pendientes.length===0){preview.innerHTML='<div class="alert warn">No se encontraron filas válidas</div>';return;}
 
+    window._csvPendientes = pendientes; // guardado para confirmarImportCSV
+    const nuevas = pendientes.filter(p=>!p.receta).length;
     preview.innerHTML = `
-      <div class="section-label" style="margin-bottom:8px">Vista previa — ${pendientes.length} líneas detectadas</div>
+      <div class="section-label" style="margin-bottom:6px">Vista previa — ${pendientes.length} líneas detectadas</div>
+      ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
+        ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente para que puedas añadir sus ingredientes después.
+      </div>`:''}
       <table style="margin-bottom:12px">
-        <thead><tr><th>Nombre en CSV</th><th>Uds.</th><th>Receta vinculada</th></tr></thead>
+        <thead><tr><th>Nombre en CSV</th><th>Uds.</th><th>Acción</th></tr></thead>
         <tbody>${pendientes.map((p,i)=>`<tr>
           <td>${p.nombre}</td>
           <td class="mono">${p.qty}</td>
-          <td><select id="csv-receta-${i}" style="font-size:12px">
-            <option value="">— No importar —</option>
-            ${state.recetas.map(r=>`<option value="${r.id}" ${p.receta?.id===r.id?'selected':''}>${r.nombre}</option>`).join('')}
-          </select></td>
+          <td>
+            <select id="csv-receta-${i}" style="font-size:12px">
+              ${!p.receta?`<option value="__nueva__" selected>✨ Crear receta nueva</option>`:''}
+              <option value="">— No importar —</option>
+              ${state.recetas.map(r=>`<option value="${r.id}" ${p.receta?.id===r.id?'selected':''}>${r.nombre}</option>`).join('')}
+            </select>
+          </td>
         </tr>`).join('')}</tbody>
       </table>
-      <button class="btn primary" onclick="confirmarImportCSV(${pendientes.length})">✓ Importar ventas</button>
+      <button class="btn primary" onclick="confirmarImportCSV()">✓ Importar ventas</button>
     `;
     event.target.value='';
   };
   reader.readAsText(file, 'UTF-8');
 }
 
-async function confirmarImportCSV(count) {
+async function confirmarImportCSV() {
+  const pendientes = window._csvPendientes || [];
   const imports=[];
-  for(let i=0;i<count;i++){
+  for(let i=0;i<pendientes.length;i++){
     const sel=document.getElementById(`csv-receta-${i}`);
     if(!sel||!sel.value) continue;
-    const qty=parseInt(document.querySelector(`#csv-preview tbody tr:nth-child(${i+1}) td:nth-child(2)`)?.textContent)||0;
-    if(qty>0) imports.push({recetaId:sel.value,unidades:qty});
+    imports.push({recetaId:sel.value, unidades:pendientes[i].qty, nombre:pendientes[i].nombre});
   }
-  if(imports.length===0){alert('Selecciona al menos una receta');return;}
+  if(imports.length===0){alert('Selecciona al menos una línea para importar');return;}
+
   const btn=document.querySelector('[onclick^="confirmarImportCSV"]');
   if(btn){btn.disabled=true;btn.textContent='Importando…';}
+
+  let nuevasCreadas=0;
   for(const imp of imports){
+    // Crear receta automáticamente si el usuario eligió "nueva"
+    if(imp.recetaId==='__nueva__'){
+      const existe=state.recetas.find(r=>r.nombre.toLowerCase()===imp.nombre.toLowerCase());
+      let receta = existe;
+      if(!receta){
+        receta={id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:0,ingredientes:[]};
+        state.recetas.push(receta);
+        await dbSaveReceta(receta);
+        nuevasCreadas++;
+      }
+      imp.recetaId=receta.id;
+    }
+
     const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) continue;
     const stockUpdates=[];
     receta.ingredientes.forEach(ing=>{
       const p=state.stock.find(x=>x.id===ing.stockId);
       if(p){p.cantidad=Math.max(0,Math.round((p.cantidad-ing.cantidad*imp.unidades)*1000)/1000);stockUpdates.push({id:p.id,cantidad:p.cantidad});}
     });
-    const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades};
+    const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades,createdAt:new Date().toISOString()};
     state.ventas.push(venta);
     await dbAddVenta(venta,stockUpdates);
   }
-  alert(`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`);
+
+  let msg=`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`;
+  if(nuevasCreadas>0) msg+=`\n✨ ${nuevasCreadas} receta${nuevasCreadas>1?'s':''} nueva${nuevasCreadas>1?'s':''} creada${nuevasCreadas>1?'s':''} — ve a Recetas para añadir sus ingredientes`;
+  alert(msg);
+  document.getElementById('csv-preview').innerHTML='';
   renderVentas();
 }
 
