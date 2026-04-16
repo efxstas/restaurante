@@ -417,6 +417,17 @@ const ADMIN_SECRET = 'ros-admin-2024';
 const DEFAULT_CATEGORIAS = ['Carnes a la brasa', 'Comida italiana', 'Bebidas', 'Otros'];
 function getCategorias() { return state.categorias.length ? state.categorias.map(c=>c.nombre) : DEFAULT_CATEGORIAS; }
 
+function guessCategoriaFromName(nombre) {
+  const n = nombre.toLowerCase();
+  const bebidas = ['agua','cerveza','vino','copa','cava','prosecco','champan','gin','vodka','whisky','ron','tequila','aperol','spritz','mojito','sangria','refresco','zumo','zumos','naranja','limon','cola','pepsi','seven','fanta','tonica','bitter','aquarius','lipton','te ','café','cafe','cortado','carajillo','cappuccino','clara','clara','cider','sidra','lambrusco','txakoli','cava','brut','rosado','tinto verano','bitter','aperitivo','baileys','licor','chupito','combi','copa de','copa '];
+  const italiana = ['pizza','pasta','spaghetti','risotto','lasagna','penne','rigatoni','gnocchi','focaccia','bruschetta','carpaccio','burrata','insalata','scamorza','cozze','carciofi','involtini','fritura','pesce','ravioli','fagottini','fettuccine','pappardelle','mezze','tagliatelle','gnocchi','carbonara','bolognese','amatriciana','norma','pesto','vongole','pescatora','astice','scoglio','granchio'];
+  const carnes = ['chuleton','solomillo','entrecot','entrecotte','carne','brasa','parrilla','secreto','entraña','tomahawk','tira de asado','costilla','chuleta','cordero','ternera','pollo','petto','tagliata','scaloppine','asado','mixta'];
+  if (bebidas.some(k=>n.includes(k))) return 'Bebidas';
+  if (italiana.some(k=>n.includes(k))) return 'Comida italiana';
+  if (carnes.some(k=>n.includes(k))) return 'Carnes a la brasa';
+  return 'Otros';
+}
+
 // Stock sort/filter state
 let stockCatFilter  = 'Todos';
 let stockSortField  = 'nombre';
@@ -1284,7 +1295,7 @@ async function confirmarImportCSV() {
 
   // 1. Crear todas las recetas nuevas en paralelo (batch insert)
   const nuevas = imports.filter(imp=>imp.recetaId==='__nueva__' && !state.recetas.find(r=>r.nombre.toLowerCase()===imp.nombre.toLowerCase()));
-  const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:imp.pvp||0,ingredientes:[]}));
+  const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:guessCategoriaFromName(imp.nombre),pvp:imp.pvp||0,ingredientes:[]}));
 
   if(recetasNuevas.length>0){
     const {error:errR} = await sb.from('recetas').insert(recetasNuevas.map(r=>({
@@ -1466,17 +1477,16 @@ function renderStock() {
             ${filtrados.length===0 ? `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text3)">Sin resultados</td></tr>` :
               filtrados.map(p=>{
                 const st=stockStatus(p);
-                const eid=JSON.stringify(p.id);
                 return `<tr>
                   <td style="font-weight:600">${p.nombre}</td>
                   <td><span class="cat-badge">${p.categoria}</span></td>
-                  <td><div style="display:flex;align-items:center;gap:6px"><div class="qty-stepper"><button onclick="ajustarStock(${eid},-1)">−</button><span class="qty-val">${fmtQty(p.cantidad)}</span><button onclick="ajustarStock(${eid},1)">+</button></div><span style="font-size:13px;color:var(--text2);font-weight:600">${p.unidad}</span></div></td>
+                  <td><div style="display:flex;align-items:center;gap:6px"><div class="qty-stepper"><button onclick="ajustarStock('${p.id}',-1)">−</button><span class="qty-val">${fmtQty(p.cantidad)}</span><button onclick="ajustarStock('${p.id}',1)">+</button></div><span style="font-size:13px;color:var(--text2);font-weight:600">${p.unidad}</span></div></td>
                   <td class="mono">${fmt(p.precioUnd)}<span style="font-size:11px;color:var(--text3)"> / ${p.unidad}</span></td>
                   <td class="mono"><span style="font-weight:600">${fmt(p.cantidad*p.precioUnd)}</span></td>
                   <td class="mono">${fmtIngr(p.cantidad,p.unidad)}</td>
                   <td class="mono">${fmtIngr(p.minimo,p.unidad)}</td>
                   <td><span class="badge ${st.cls}">${st.txt}</span></td>
-                  <td><div style="display:flex;gap:6px"><button class="btn sm" onclick="showModalProducto(${eid})">Editar</button><button class="btn sm danger" onclick="eliminarProducto(${eid})">✕</button></div></td>
+                  <td><div style="display:flex;gap:6px"><button class="btn sm" onclick="showModalProducto('${p.id}')">Editar</button><button class="btn sm danger" onclick="eliminarProducto('${p.id}')">✕</button></div></td>
                 </tr>`;
               }).join('')}
           </tbody>
@@ -1659,7 +1669,6 @@ function renderRecetas() {
     <div class="recipes-grid">
       ${filtradas.map(r=>{
         const c=costoReceta(r), mg=margenReceta(r), mc=margenClass(mg);
-        const eid=JSON.stringify(r.id);
         const porciones=porcionesDisponibles(r);
         const porcionesHtml=porciones!==null?`<span style="font-size:12px;color:${porciones===0?'var(--red)':porciones<=3?'var(--amber)':'var(--teal)'}">${porciones===0?'Sin stock':''+porciones+' porción'+(porciones!==1?'es':'')+' disponible'+(porciones!==1?'s':'')}</span>`:'';
         return `<div class="recipe-card">
@@ -1686,8 +1695,8 @@ function renderRecetas() {
               return p?`<span class="ingr-tag">${p.nombre} <span style="color:var(--text3)">${fmtIngr(ing.cantidad, p.unidad)}</span></span>`:'';
             }).join('')}</div>
             <div class="recipe-actions">
-              <button class="btn sm" onclick="showModalReceta(${eid})">Editar</button>
-              <button class="btn sm danger" onclick="eliminarReceta(${eid})">Eliminar</button>
+              <button class="btn sm" onclick="showModalReceta('${r.id}')">Editar</button>
+              <button class="btn sm danger" onclick="eliminarReceta('${r.id}')">Eliminar</button>
             </div>
           </div>
         </div>`;
