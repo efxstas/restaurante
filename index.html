@@ -1251,11 +1251,11 @@ async function confirmarImportCSV() {
   const recetasNuevas = nuevas.map(imp=>({id:uid(),nombre:imp.nombre,categoria:getCategorias()[0]||'Otros',pvp:0,ingredientes:[]}));
 
   if(recetasNuevas.length>0){
-    // Insert en batch (una sola llamada a Supabase)
-    await sb.from('recetas').insert(recetasNuevas.map(r=>({
+    const {error:errR} = await sb.from('recetas').insert(recetasNuevas.map(r=>({
       id:r.id, restaurante_id:currentRestaurant.id,
       nombre:r.nombre, categoria:r.categoria, pvp:r.pvp
     })));
+    if(errR){ alert('Error creando recetas: ' + errR.message); if(btn){btn.disabled=false;btn.textContent='✓ Importar ventas';} return; }
     recetasNuevas.forEach(r=>state.recetas.push(r));
   }
 
@@ -1269,24 +1269,30 @@ async function confirmarImportCSV() {
 
   if(btn) btn.textContent=`Registrando ventas…`;
 
-  // 2. Insertar todas las ventas en batch
-  const ventasNuevas=[];
-  imports.forEach(imp=>{
-    const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) return;
-    const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades,createdAt:new Date().toISOString()};
-    state.ventas.push(venta);
-    ventasNuevas.push({id:venta.id,restaurante_id:currentRestaurant.id,receta_id:venta.recetaId,unidades:venta.unidades,created_at:venta.createdAt});
-  });
+  try {
+    // 2. Insertar todas las ventas en batch
+    const ventasNuevas=[];
+    imports.forEach(imp=>{
+      const receta=state.recetas.find(r=>r.id===imp.recetaId); if(!receta) return;
+      const venta={id:uid(),recetaId:imp.recetaId,unidades:imp.unidades,createdAt:new Date().toISOString()};
+      state.ventas.push(venta);
+      ventasNuevas.push({id:venta.id,restaurante_id:currentRestaurant.id,receta_id:venta.recetaId,unidades:venta.unidades,created_at:venta.createdAt});
+    });
 
-  if(ventasNuevas.length>0){
-    await sb.from('ventas').insert(ventasNuevas);
+    if(ventasNuevas.length>0){
+      const {error} = await sb.from('ventas').insert(ventasNuevas);
+      if(error) throw new Error('Ventas: ' + error.message);
+    }
+
+    let msg=`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`;
+    if(recetasNuevas.length>0) msg+=`\n✨ ${recetasNuevas.length} receta${recetasNuevas.length>1?'s':''} nueva${recetasNuevas.length>1?'s':''} creada${recetasNuevas.length>1?'s':''} — ve a Recetas para añadir ingredientes`;
+    alert(msg);
+    document.getElementById('csv-preview').innerHTML='';
+    renderVentas();
+  } catch(err) {
+    alert('Error al importar: ' + err.message);
+    if(btn){btn.disabled=false;btn.textContent='✓ Importar ventas';}
   }
-
-  let msg=`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`;
-  if(recetasNuevas.length>0) msg+=`\n✨ ${recetasNuevas.length} receta${recetasNuevas.length>1?'s':''} nueva${recetasNuevas.length>1?'s':''} creada${recetasNuevas.length>1?'s':''} — ve a Recetas para añadir ingredientes`;
-  alert(msg);
-  document.getElementById('csv-preview').innerHTML='';
-  renderVentas();
 }
 
 async function registrarVenta() {
