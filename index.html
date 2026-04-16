@@ -400,7 +400,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser       = null;
 let currentRestaurant = null;
 let userRestaurantes  = [];
-let state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [] };
+let state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [], proveedores: [] };
 let userRole = 'encargado'; // 'superadmin' | 'jefe' | 'admin' | 'encargado'
 let albaranProveedor = '';
 let albaranProveedorFilter = 'Todos';
@@ -719,9 +719,9 @@ async function joinRestaurant() {
 
 // ─── DB: CARGAR DATOS ─────────────────────────────────────────
 async function loadStateFromSupabase() {
-  if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [] }; return; }
+  if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [], proveedores: [] }; return; }
   const rid = currentRestaurant.id;
-  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes, catRes] = await Promise.all([
+  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes, catRes, provRes] = await Promise.all([
     sb.from('stock').select('*').eq('restaurante_id', rid),
     sb.from('recetas').select('*').eq('restaurante_id', rid),
     sb.from('receta_ingredientes').select('*'),
@@ -729,8 +729,10 @@ async function loadStateFromSupabase() {
     sb.from('albaranes').select('*').eq('restaurante_id', rid),
     sb.from('albaran_lineas').select('*'),
     sb.from('categorias').select('*').eq('restaurante_id', rid).order('nombre'),
+    sb.from('proveedores').select('*').eq('restaurante_id', rid).order('nombre'),
   ]);
-  state.categorias = catRes.data || [];
+  state.categorias  = catRes.data  || [];
+  state.proveedores = provRes.data || [];
 
   state.stock = (stockRes.data || []).map(p => ({
     id: p.id, nombre: p.nombre, categoria: p.categoria,
@@ -1661,17 +1663,36 @@ function renderAlbaranes() {
         <div class="card">
           <div class="card-header"><h2>Foto del albarán</h2></div>
           <div class="card-body">
-            <div style="margin-bottom:12px">
-              <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Proveedor</label>
-              <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <input list="proveedores-datalist" id="albaran-proveedor" placeholder="Nombre del proveedor (ej: ITALIAMO.SL)" style="flex:1;min-width:160px" oninput="onProveedorChange()" value="${albaranProveedor}">
-                <datalist id="proveedores-datalist">${[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))].map(p=>`<option value="${p}">`).join('')}</datalist>
+            <div style="margin-bottom:14px">
+              <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Proveedor</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <select id="albaran-proveedor-select" onchange="onProveedorSelectChange()" style="flex:1;min-width:160px">
+                  <option value="">— Selecciona proveedor —</option>
+                  ${state.proveedores.map(p=>`<option value="${p.nombre}" ${albaranProveedor===p.nombre?'selected':''}>${p.nombre}</option>`).join('')}
+                </select>
                 <select id="proveedor-cat-default" onchange="onProveedorCatChange()" style="flex-shrink:0" title="Categoría por defecto para este proveedor">
                   <option value="">Categoría auto (OCR)</option>
                   ${getCategorias().map(c=>`<option value="${c}" ${proveedorCatMap[albaranProveedor]===c?'selected':''}>${c}</option>`).join('')}
                 </select>
               </div>
-              <div style="font-size:11px;color:var(--text3);margin-top:3px">Si asignas una categoría al proveedor, todos sus productos se clasificarán ahí automáticamente</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:4px">Asigna una categoría al proveedor para que sus productos se clasifiquen automáticamente</div>
+              <!-- Gestionar proveedores -->
+              <div style="margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
+                <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Gestionar proveedores</div>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                  <input id="nuevo-prov-input" type="text" placeholder="Nombre del proveedor" style="flex:1;font-size:13px">
+                  <button class="btn sm primary" onclick="agregarProveedor()">+ Añadir</button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px">
+                  ${state.proveedores.length===0
+                    ? `<span style="font-size:12px;color:var(--text3)">Sin proveedores guardados</span>`
+                    : state.proveedores.map(p=>`
+                      <span class="cat-badge" style="display:inline-flex;align-items:center;gap:4px">
+                        ${p.nombre}
+                        <button onclick="eliminarProveedor('${p.nombre.replace(/'/g,"\\'")}')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:13px;padding:0;line-height:1" title="Eliminar">×</button>
+                      </span>`).join('')}
+                </div>
+              </div>
             </div>
             <div class="albaran-drop" id="albaran-drop" onclick="document.getElementById('albaran-file').click()"
               ondragover="event.preventDefault();this.classList.add('drag-over')"
@@ -1844,7 +1865,7 @@ async function confirmarAlbaran() {
       stockUpdates.push({...nuevo,isNew:true});
     }
   });
-  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+  albaranProveedor = document.getElementById('albaran-proveedor-select')?.value || albaranProveedor;
   const albaran={id:uid(),fecha:new Date().toLocaleDateString('es-ES'),proveedor:albaranProveedor,lineas:validas};
   state.albaranes.push(albaran);
   albaranLineas=[];
@@ -1937,19 +1958,40 @@ async function procesarAlbaranOCR(base64, mediaType) {
   }
 }
 
-function onProveedorChange() {
-  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+function onProveedorSelectChange() {
+  albaranProveedor = document.getElementById('albaran-proveedor-select')?.value || '';
   const catSelect = document.getElementById('proveedor-cat-default');
   if (catSelect) catSelect.value = proveedorCatMap[albaranProveedor] || '';
 }
+function onProveedorChange() { onProveedorSelectChange(); } // alias legacy
 function onProveedorCatChange() {
-  albaranProveedor = document.getElementById('albaran-proveedor')?.value.trim() || '';
+  albaranProveedor = document.getElementById('albaran-proveedor-select')?.value || '';
   const cat = document.getElementById('proveedor-cat-default')?.value || '';
   if (albaranProveedor) {
     if (cat) proveedorCatMap[albaranProveedor] = cat;
     else delete proveedorCatMap[albaranProveedor];
     localStorage.setItem('prov_cat_map', JSON.stringify(proveedorCatMap));
   }
+}
+
+async function agregarProveedor() {
+  const input = document.getElementById('nuevo-prov-input'); if (!input) return;
+  const nombre = input.value.trim(); if (!nombre) return;
+  if (state.proveedores.some(p=>p.nombre===nombre)) { alert('Ya existe ese proveedor'); return; }
+  const { error } = await sb.from('proveedores').insert({ restaurante_id: currentRestaurant.id, nombre });
+  if (error) { alert('Error: ' + error.message); return; }
+  state.proveedores.push({ nombre });
+  state.proveedores.sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  input.value = '';
+  renderAlbaranes();
+}
+
+async function eliminarProveedor(nombre) {
+  if (!confirm(`¿Eliminar el proveedor "${nombre}"?`)) return;
+  await sb.from('proveedores').delete().eq('restaurante_id', currentRestaurant.id).eq('nombre', nombre);
+  state.proveedores = state.proveedores.filter(p=>p.nombre!==nombre);
+  if (albaranProveedor === nombre) albaranProveedor = '';
+  renderAlbaranes();
 }
 function setAlbaranFilter(prov) { albaranProveedorFilter = prov; renderAlbaranes(); }
 function setAlbaranPeriodo(p) {
