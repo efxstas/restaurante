@@ -2191,8 +2191,26 @@ function buildModalRecetaHTML(r) {
           <div class="divider"></div>
           <div class="section-label">Ingredientes (escandallo)</div>
           <div id="ingr-modal-list" class="ingr-modal-list">${buildIngrList()}</div>
+
+          <!-- IA -->
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
+            <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✨ Introducir con IA</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Escribe en lenguaje natural. La IA buscará cada ingrediente en tu stock automáticamente.</div>
+            <div style="display:flex;gap:8px;align-items:flex-start">
+              <textarea id="ingr-ia-text" placeholder="Ej: 100g patata, 200g entraña, 2 cebollas, 1L nata..." style="flex:1;min-height:54px;resize:vertical;font-size:13px;font-family:inherit;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></textarea>
+              <button class="btn sm primary" onclick="detectarIngredientesIA()" style="flex-shrink:0;white-space:nowrap">Detectar</button>
+            </div>
+            <div id="ingr-ia-results"></div>
+          </div>
+
+          <!-- MANUAL con búsqueda -->
+          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">🔍 Buscar y añadir manualmente</div>
           <div class="ingr-add-row">
-            <div><label>Producto del stock</label><select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select></div>
+            <div>
+              <label>Buscar producto</label>
+              <input id="ingr-search" type="text" placeholder="Escribe para filtrar..." oninput="filterIngrSelect()" style="margin-bottom:5px">
+              <select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select>
+            </div>
             <div><label>Cantidad</label><input id="ingr-qty" type="number" step="0.01" value="0.1" min="0.001"></div>
             <div style="display:flex;align-items:flex-end"><button class="btn" onclick="agregarIngr()" style="width:100%">+ Añadir</button></div>
           </div>
@@ -2235,6 +2253,79 @@ function agregarIngr() {
   if(cantidad<=0){alert('Introduce una cantidad válida');return;}
   const ex=tmpIngredientes.find(i=>i.stockId===stockId);
   if(ex) ex.cantidad=cantidad; else tmpIngredientes.push({stockId,cantidad});
+  refreshIngrList();
+}
+
+function filterIngrSelect() {
+  const q = (document.getElementById('ingr-search')?.value||'').toLowerCase();
+  const sel = document.getElementById('ingr-prod'); if(!sel) return;
+  sel.innerHTML = state.stock
+    .filter(p => !q || p.nombre.toLowerCase().includes(q))
+    .map(p => `<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('');
+}
+
+let ingrAiResults = [];
+
+async function detectarIngredientesIA() {
+  const text = document.getElementById('ingr-ia-text')?.value.trim();
+  if (!text) { alert('Escribe los ingredientes primero'); return; }
+  const resultsEl = document.getElementById('ingr-ia-results');
+  const btn = document.querySelector('[onclick="detectarIngredientesIA()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Detectando…'; }
+  if (resultsEl) resultsEl.innerHTML = `<div style="font-size:12px;color:var(--text3);margin-top:8px">Analizando con IA…</div>`;
+  try {
+    const res = await fetch('/api/ocr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'match-ingredients', text, stockItems: state.stock.map(p=>({nombre:p.nombre,unidad:p.unidad})) }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || `Error ${res.status}`);
+    const data = await res.json();
+    ingrAiResults = (data.matches || []).map(m => {
+      const prod = m.matched_nombre ? state.stock.find(p => p.nombre === m.matched_nombre) : null;
+      return { input: m.input, cantidad: parseFloat(m.cantidad)||1, unidad: m.unidad||'ud', stockId: prod?.id||null, matchedNombre: prod?.nombre||null };
+    });
+    if (resultsEl) resultsEl.innerHTML = renderAiIngrResults();
+  } catch(err) {
+    if (resultsEl) resultsEl.innerHTML = `<div style="color:var(--red);font-size:12px;margin-top:6px">Error: ${err.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Detectar'; }
+  }
+}
+
+function renderAiIngrResults() {
+  if (!ingrAiResults.length) return `<div style="font-size:12px;color:var(--text3);margin-top:8px">No se detectaron ingredientes</div>`;
+  return `<div style="margin-top:10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden">
+    <div style="padding:8px 12px;background:var(--surface2);font-size:11px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border)">
+      Revisa y confirma — marca los que quieres añadir:
+    </div>
+    ${ingrAiResults.map((m,i) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <input type="checkbox" id="aim-${i}" ${m.stockId?'checked':'disabled'} style="flex-shrink:0;width:14px;height:14px">
+      <div style="flex:1;font-size:12px;min-width:0">
+        <span style="font-family:monospace;font-weight:700">${m.cantidad}${m.unidad}</span>
+        <span style="color:var(--text3)"> "${m.input}"</span>
+        ${m.stockId
+          ? `<span style="color:var(--text3)"> → </span><strong style="color:var(--teal)">${m.matchedNombre}</strong>`
+          : `<span style="color:var(--red);font-size:11px"> — sin coincidencia en stock</span>`}
+      </div>
+    </div>`).join('')}
+    <div style="padding:10px 12px">
+      <button class="btn sm primary" onclick="confirmarMatchesIA()">✓ Añadir seleccionados al escandallo</button>
+    </div>
+  </div>`;
+}
+
+function confirmarMatchesIA() {
+  ingrAiResults.forEach((m, i) => {
+    const cb = document.getElementById(`aim-${i}`);
+    if (!cb?.checked || !m.stockId) return;
+    const ex = tmpIngredientes.find(ing => ing.stockId === m.stockId);
+    if (ex) ex.cantidad = m.cantidad; else tmpIngredientes.push({ stockId: m.stockId, cantidad: m.cantidad });
+  });
+  ingrAiResults = [];
+  const el = document.getElementById('ingr-ia-results'); if (el) el.innerHTML = '';
+  const ta = document.getElementById('ingr-ia-text'); if (ta) ta.value = '';
   refreshIngrList();
 }
 
@@ -2461,6 +2552,7 @@ function renderOptim() {
 
 // ─── ALBARANES ────────────────────────────────────────────────
 let albaranLineas = [];
+let albaranConfirming = false;
 let batchQueue = [];
 let batchProcessing = false;
 let batchDefaultProveedor = '';
@@ -2728,13 +2820,19 @@ function renderBatchItem(item) {
     error:      `<span style="background:#fef2f2;color:#dc2626;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600">✗ Error OCR</span>`,
   };
 
+  const dupHTML = item.dupWarning ? `
+    <div style="margin-top:6px;padding:6px 10px;background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:4px;font-size:12px;color:var(--amber)">
+      ⚠️ <strong>Posible duplicado:</strong> ${item.dupWarning.coincidencias} de ${item.dupWarning.total} productos ya están en el albarán del <strong>${item.dupWarning.albaran.fecha}</strong>${item.dupWarning.albaran.proveedor?' ('+item.dupWarning.albaran.proveedor+')':''}.
+    </div>` : '';
+
   const lineasHTML = item.lineas && item.lineas.length > 0 ? `
     <div style="margin-top:6px;font-size:12px;color:var(--text2)">
       ${item.lineas.length} producto${item.lineas.length>1?'s':''} detectado${item.lineas.length>1?'s':''}:
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
         ${item.lineas.map(l=>`<span class="cat-badge" style="font-size:11px">${l.nombre} · ${l.cantidad} ${l.unidad}</span>`).join('')}
       </div>
-    </div>` : '';
+    </div>
+    ${dupHTML}` : '';
 
   const actions = {
     done: `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
@@ -2855,8 +2953,10 @@ async function startBatchProcessing() {
         unidad: l.unidad || 'kg',
         precioUnd: parseFloat(l.precio_und) || 0,
       }));
-      if (next.lineas.length > 0) { next.status = 'done'; }
-      else { next.status = 'error'; next.errorMsg = 'No se detectaron productos. Usa "Editar líneas" para añadirlos manualmente.'; }
+      if (next.lineas.length > 0) {
+        next.status = 'done';
+        next.dupWarning = detectarDuplicadoAlbaran(next.lineas);
+      } else { next.status = 'error'; next.errorMsg = 'No se detectaron productos. Usa "Editar líneas" para añadirlos manualmente.'; }
     } catch(err) {
       next.status = 'error';
       next.errorMsg = err.message || 'Error al procesar';
@@ -2938,8 +3038,12 @@ async function confirmAllBatchItems() {
 }
 
 async function confirmarAlbaran() {
+  if (albaranConfirming) return;
   const validas=albaranLineas.filter(l=>l.nombre.trim()&&l.cantidad>0);
   if(validas.length===0){alert('Añade al menos una línea válida con nombre y cantidad');return;}
+  albaranConfirming = true;
+  const btnConfirm = document.querySelector('[onclick="confirmarAlbaran()"]');
+  if (btnConfirm) { btnConfirm.disabled = true; btnConfirm.textContent = 'Guardando…'; }
   const stockUpdates=[];
   validas.forEach(l=>{
     const existente=state.stock.find(x=>x.nombre.toLowerCase()===l.nombre.toLowerCase());
@@ -2957,6 +3061,7 @@ async function confirmarAlbaran() {
   const albaran={id:uid(),fecha:new Date().toLocaleDateString('es-ES'),proveedor:albaranProveedor,lineas:validas};
   state.albaranes.push(albaran);
   albaranLineas=[];
+  albaranConfirming = false;
   alert(`✓ ${validas.length} producto${validas.length>1?'s':''} añadido${validas.length>1?'s':''} al stock`);
   renderAlbaranes();
   await dbSaveAlbaran(albaran, stockUpdates);
@@ -3030,7 +3135,14 @@ async function procesarAlbaranOCR(base64, mediaType) {
       }));
       document.getElementById('albaran-lineas').innerHTML = renderLineasAlbaran();
       if (msg) {
-        msg.textContent = `✓ ${data.lineas.length} producto${data.lineas.length>1?'s':''} detectado${data.lineas.length>1?'s':''}. Revisa las cantidades y precios antes de confirmar.`;
+        const dup = detectarDuplicadoAlbaran(albaranLineas);
+        if (dup) {
+          msg.style.background = 'var(--amber-bg)'; msg.style.color = 'var(--amber)'; msg.style.borderColor = 'var(--amber-border)';
+          msg.innerHTML = `⚠️ <strong>Posible duplicado:</strong> ${dup.coincidencias} de ${dup.total} productos ya aparecen en el albarán del <strong>${dup.albaran.fecha}</strong>${dup.albaran.proveedor?' ('+dup.albaran.proveedor+')':''}. Revisa antes de confirmar.`;
+        } else {
+          msg.style.background = ''; msg.style.color = ''; msg.style.borderColor = '';
+          msg.textContent = `✓ ${data.lineas.length} producto${data.lineas.length>1?'s':''} detectado${data.lineas.length>1?'s':''}. Revisa las cantidades y precios antes de confirmar.`;
+        }
         msg.style.display = 'block';
       }
     } else {
@@ -3044,6 +3156,38 @@ async function procesarAlbaranOCR(base64, mediaType) {
       drop.innerHTML = `<div class="drop-icon">📄</div><div class="drop-text">Pulsa o arrastra aquí</div><div class="drop-sub">Foto del albarán (JPG, PNG)</div>`;
     }
   }
+}
+
+function normNombre(s) {
+  return String(s).toLowerCase().trim()
+    .replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
+    .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n')
+    .replace(/\s+/g,' ');
+}
+
+function nombresSimilares(a, b) {
+  const na = normNombre(a), nb = normNombre(b);
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const wa = na.split(' ').filter(w=>w.length>2);
+  const wb = nb.split(' ').filter(w=>w.length>2);
+  const hits = wa.filter(w => wb.some(w2 => w2.includes(w) || w.includes(w2)));
+  return wa.length > 0 && hits.length / wa.length >= 0.6;
+}
+
+function detectarDuplicadoAlbaran(lineas) {
+  if (!lineas.length || !state.albaranes.length) return null;
+  let mejor = null, mejorScore = 0;
+  for (const alb of state.albaranes) {
+    const existentes = alb.lineas.map(l => l.nombre);
+    const coincidencias = lineas.filter(l => existentes.some(e => nombresSimilares(l.nombre, e)));
+    const score = coincidencias.length / lineas.length;
+    if (score > mejorScore && score >= 0.5) {
+      mejorScore = score;
+      mejor = { albaran: alb, coincidencias: coincidencias.length, total: lineas.length, pct: Math.round(score*100) };
+    }
+  }
+  return mejor;
 }
 
 function onProveedorSelectChange() {

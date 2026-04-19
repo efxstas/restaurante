@@ -7,7 +7,49 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Método no permitido' });
   }
 
-  const { image, mediaType } = req.body;
+  const { image, mediaType, mode, text, stockItems } = req.body;
+
+  // ── Modo: match de ingredientes (sin imagen) ─────────────────
+  if (mode === 'match-ingredients') {
+    if (!text) return res.status(400).json({ error: 'No se recibió texto de ingredientes' });
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'API key no configurada' });
+
+    const stockList = (stockItems || []).map(s => `- "${s.nombre}" (${s.unidad})`).join('\n');
+    const prompt = `Eres el asistente de un restaurante. Analiza esta descripción de ingredientes y busca la coincidencia más probable en el inventario disponible.
+
+Ingredientes escritos por el usuario:
+${text}
+
+Productos disponibles en el inventario:
+${stockList}
+
+Para cada ingrediente detectado, encuentra el producto del inventario que mejor coincide semánticamente (ej: "patata" puede coincidir con "pommodoro patata", "entraña" con "Entraña irlandesa", etc.).
+
+Devuelve ÚNICAMENTE JSON válido:
+{"matches": [{"input": "texto original del ingrediente", "cantidad": número, "unidad": "kg/g/l/ml/ud/cl/lata/bote", "matched_nombre": "nombre exacto del producto del inventario o null si no hay coincidencia razonable"}]}
+
+Reglas:
+- Extrae cantidad y unidad del texto (ej: "100g patata" → cantidad:100, unidad:"g")
+- Si solo dice "1 cebolla" → cantidad:1, unidad:"ud"
+- Si no especifica cantidad → cantidad:1, unidad:"ud"
+- matched_nombre debe ser el nombre EXACTO tal como aparece en el inventario, o null`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+      });
+      if (!response.ok) { const e = await response.text(); return res.status(500).json({ error: 'Error Claude API', details: e }); }
+      const data = await response.json();
+      const raw = data.content[0].text.trim();
+      try { return res.status(200).json(JSON.parse(raw)); }
+      catch { const m = raw.match(/\{[\s\S]*\}/); if (m) return res.status(200).json(JSON.parse(m[0])); return res.status(500).json({ error: 'Respuesta inesperada', raw }); }
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
+
+  // ── Modo: OCR de albarán (imagen) ────────────────────────────
   if (!image) {
     return res.status(400).json({ error: 'No se recibió imagen' });
   }
