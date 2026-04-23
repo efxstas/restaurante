@@ -877,6 +877,29 @@ async function dbDeleteAllStock() {
   if (error) throw new Error('Eliminar stock: ' + error.message);
 }
 
+async function recalcularStockDesdeAlbaranes() {
+  if (!confirm('¿Recalcular el stock sumando únicamente los albaranes confirmados?\n\nEsto ignora ventas y pone el stock exactamente igual a lo que has comprado.\nÚsalo para corregir descuadres durante el periodo de configuración.')) return;
+  // Construir mapa: nombre_lowercase → cantidad total comprada
+  const totales = {};
+  state.albaranes.forEach(a => {
+    (a.lineas||[]).forEach(l => {
+      const key = (l.nombre||'').toLowerCase();
+      if (!totales[key]) totales[key] = 0;
+      totales[key] += l.cantidad || 0;
+    });
+  });
+  // Actualizar stock existente
+  const updates = [];
+  state.stock.forEach(p => {
+    const nueva = Math.round((totales[p.nombre.toLowerCase()] || 0) * 1000) / 1000;
+    if (nueva !== p.cantidad) { p.cantidad = nueva; updates.push({ id: p.id, cantidad: nueva }); }
+  });
+  if (updates.length === 0) { alert('El stock ya está alineado con los albaranes.'); return; }
+  renderStock(); renderResumen();
+  await Promise.all(updates.map(u => sb.from('stock').update({ cantidad: u.cantidad }).eq('id', u.id)));
+  alert(`✓ ${updates.length} producto${updates.length!==1?'s':''} actualizados. El stock refleja exactamente lo comprado en albaranes.`);
+}
+
 async function limpiarStock() {
   const n = state.stock.length;
   if (n === 0) { alert('No hay productos en el stock.'); return; }
@@ -1362,6 +1385,13 @@ function importarCSVVentas(event) {
       ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
         ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente${hayPvp?' con PVP calculado del CSV':''}.
       </div>`:''}
+      <div style="margin-bottom:10px;padding:10px 12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:14px">
+          <input type="checkbox" id="csv-descontar-stock" style="width:16px;height:16px;cursor:pointer">
+          <span><strong>Descontar ingredientes del stock</strong> — actívalo solo si estas ventas son reales y aún no han restado stock</span>
+        </label>
+        <p style="margin:6px 0 0 24px;font-size:12px;color:var(--text3)">Desactivado por defecto: útil para registrar ventas históricas sin afectar el inventario actual.</p>
+      </div>
       <button class="btn primary" style="margin-bottom:10px" onclick="confirmarImportCSV()">✓ Importar ventas</button>
       <table style="margin-bottom:12px">
         <thead><tr><th>Nombre</th><th>Uds.</th>${hayPvp?'<th>PVP (Importe÷Uds)</th>':''}<th>Acción</th></tr></thead>
@@ -1492,7 +1522,24 @@ async function confirmarImportCSV() {
       if(error) throw new Error('Ventas: ' + error.message);
     }
 
+    // 3. Descontar stock si el checkbox está activo
+    const descontarStock = document.getElementById('csv-descontar-stock')?.checked;
+    if (descontarStock) {
+      if(btn) btn.textContent=`Descontando stock…`;
+      const stockUpdates = {};
+      imports.forEach(imp => {
+        const receta = state.recetas.find(r => r.id === imp.recetaId); if (!receta) return;
+        const updates = calcStockDeductions(receta, imp.unidades);
+        updates.forEach(u => { stockUpdates[u.id] = u.cantidad; });
+      });
+      const stockEntries = Object.entries(stockUpdates);
+      if (stockEntries.length > 0) {
+        await Promise.all(stockEntries.map(([id, cantidad]) => sb.from('stock').update({cantidad}).eq('id', id)));
+      }
+    }
+
     let msg=`✓ ${imports.length} venta${imports.length>1?'s':''} importada${imports.length>1?'s':''}`;
+    if(descontarStock) msg+=`\n📦 Stock descontado según ingredientes de cada receta`;
     if(recetasNuevas.length>0) msg+=`\n✨ ${recetasNuevas.length} receta${recetasNuevas.length>1?'s':''} nueva${recetasNuevas.length>1?'s':''} creada${recetasNuevas.length>1?'s':''} — ve a Recetas para añadir ingredientes`;
     alert(msg);
     document.getElementById('csv-preview').innerHTML='';
@@ -1585,7 +1632,7 @@ async function eliminarVenta(id) {
 }
 
 async function limpiarVentas() {
-  if(!confirm('¿Borrar todo el historial?')) return;
+  if(!confirm('¿Borrar todo el historial de ventas?\n\nNota: el stock no se modifica. Si necesitas resetear el stock usa "↺ Recalcular desde albaranes" en la página de Stock.')) return;
   state.ventas=[]; renderVentas(); renderResumen();
   await dbClearVentas();
 }
@@ -2012,6 +2059,7 @@ function renderStock() {
             ${proveedores.map(p=>`<option value="${p}" ${stockProvFilter===p?'selected':''}>${p}</option>`).join('')}
           </select>`:''}
           <input type="text" id="stock-search" placeholder="Buscar…" oninput="renderStock()" style="width:150px">
+          <button class="btn sm" onclick="recalcularStockDesdeAlbaranes()" title="Recalcula las cantidades de stock sumando solo los albaranes confirmados, ignorando ventas">↺ Recalcular desde albaranes</button>
           <button class="btn sm danger" onclick="limpiarStock()">Borrar todo</button>
         </div>
       </div>
@@ -2577,16 +2625,15 @@ function renderOptim() {
     : '#22c55e';
 
   // ── Productos críticos (< 20% mínimo o agotados) ──────────
-  // Para cada producto, calculamos cuánto se ha comprado históricamente vía albaranes
-  // haciendo fuzzy match nombre stock vs nombre línea albaran
+  // Para cada producto, sumamos lo comprado en albaranes usando coincidencia exacta
+  // (igual que al confirmar albaranes → consistente con el stock real)
   const historialCompra = {}; // stockId → total cantidad comprada
   state.stock.forEach(p => {
     const nombreN = p.nombre.toLowerCase();
     let total = 0;
     state.albaranes.forEach(a => {
       (a.lineas||[]).forEach(l => {
-        const ln = (l.nombre||'').toLowerCase();
-        if (ln === nombreN || ln.includes(nombreN) || nombreN.includes(ln)) {
+        if ((l.nombre||'').toLowerCase() === nombreN) {
           total += l.cantidad || 0;
         }
       });
