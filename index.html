@@ -486,7 +486,12 @@ function porcionesDisponibles(r) {
   return min === Infinity ? null : min;
 }
 
-function costoReceta(r) {
+function costoReceta(r, _depth = 0) {
+  if (r.costeDirecto > 0) return r.costeDirecto;
+  if (r.esMenu && r.opciones.length > 0 && _depth < 2) {
+    const subs = r.opciones.map(id => state.recetas.find(x => x.id === id)).filter(Boolean).filter(s => !s.esMenu);
+    if (subs.length > 0) return subs.reduce((s, sub) => s + costoReceta(sub, _depth + 1), 0) / subs.length;
+  }
   return r.ingredientes.reduce((s,ing) => {
     const p = state.stock.find(x => x.id === ing.stockId);
     return s + (p ? p.precioUnd * ing.cantidad : 0);
@@ -498,8 +503,8 @@ function stockStatus(p) {
   if (p.cantidad <= p.minimo) return { cls:'low', txt:'Bajo mínimo' };
   return { cls:'ok', txt:'OK' };
 }
-function margenClass(mg) { return mg >= 60 ? 'high' : mg >= 40 ? 'mid' : 'low'; }
-function margenColor(mg) { return mg >= 60 ? 'var(--teal)' : mg >= 40 ? 'var(--amber)' : 'var(--red)'; }
+function margenClass(mg) { return mg >= 70 ? 'high' : mg >= 60 ? 'mid' : 'low'; }
+function margenColor(mg) { return mg >= 70 ? 'var(--teal)' : mg >= 60 ? 'var(--amber)' : 'var(--red)'; }
 
 // ─── AUTH UI ──────────────────────────────────────────────────
 function showAuthMsg(text, isError = true) {
@@ -746,7 +751,7 @@ async function joinRestaurant() {
 async function loadStateFromSupabase() {
   if (!currentRestaurant) { state = { stock: [], recetas: [], ventas: [], albaranes: [], categorias: [], proveedores: [] }; return; }
   const rid = currentRestaurant.id;
-  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes, catRes, provRes, consumosRes] = await Promise.all([
+  const [stockRes, recetasRes, ingrsRes, ventasRes, albaranesRes, lineasRes, catRes, provRes, consumosRes, opcionesRes] = await Promise.all([
     sb.from('stock').select('*').eq('restaurante_id', rid),
     sb.from('recetas').select('*').eq('restaurante_id', rid),
     sb.from('receta_ingredientes').select('*'),
@@ -756,6 +761,7 @@ async function loadStateFromSupabase() {
     sb.from('categorias').select('*').eq('restaurante_id', rid).order('nombre'),
     sb.from('proveedores').select('*').eq('restaurante_id', rid).order('nombre'),
     sb.from('evento_consumos').select('*'),
+    sb.from('receta_opciones').select('*'),
   ]);
   state.categorias  = catRes.data  || [];
   state.proveedores = provRes.data || [];
@@ -771,8 +777,16 @@ async function loadStateFromSupabase() {
     if (!ingsByReceta[i.receta_id]) ingsByReceta[i.receta_id] = [];
     ingsByReceta[i.receta_id].push({ stockId: i.stock_id, cantidad: i.cantidad });
   });
+  const opcionesByReceta = {};
+  (opcionesRes.data || []).forEach(o => {
+    if (!opcionesByReceta[o.receta_id]) opcionesByReceta[o.receta_id] = [];
+    opcionesByReceta[o.receta_id].push(o.opcion_id);
+  });
   state.recetas = (recetasRes.data || []).map(r => ({
     id: r.id, nombre: r.nombre, categoria: r.categoria, pvp: r.pvp,
+    costeDirecto: r.coste_directo || 0,
+    esMenu: r.es_menu || false,
+    opciones: opcionesByReceta[r.id] || [],
     ingredientes: ingsByReceta[r.id] || [],
   }));
 
@@ -826,15 +840,25 @@ async function dbSaveReceta(r) {
   const {error:e1} = await sb.from('recetas').upsert({
     id: r.id, restaurante_id: currentRestaurant.id,
     nombre: r.nombre, categoria: r.categoria, pvp: r.pvp,
+    coste_directo: r.costeDirecto > 0 ? r.costeDirecto : null,
+    es_menu: r.esMenu || false,
   });
   if (e1) throw new Error('Receta: ' + e1.message);
   const {error:e2} = await sb.from('receta_ingredientes').delete().eq('receta_id', r.id);
   if (e2) throw new Error('Borrar ingredientes: ' + e2.message);
-  if (r.ingredientes.length > 0) {
+  if (!r.esMenu && r.ingredientes.length > 0) {
     const {error:e3} = await sb.from('receta_ingredientes').insert(
       r.ingredientes.map(ing => ({ id: uid(), receta_id: r.id, stock_id: ing.stockId, cantidad: ing.cantidad }))
     );
     if (e3) throw new Error('Guardar ingredientes: ' + e3.message);
+  }
+  const {error:e4} = await sb.from('receta_opciones').delete().eq('receta_id', r.id);
+  if (e4) throw new Error('Borrar opciones: ' + e4.message);
+  if (r.esMenu && r.opciones.length > 0) {
+    const {error:e5} = await sb.from('receta_opciones').insert(
+      r.opciones.map(opId => ({ id: uid(), receta_id: r.id, opcion_id: opId }))
+    );
+    if (e5) throw new Error('Guardar opciones: ' + e5.message);
   }
 }
 async function dbDeleteReceta(id) {
@@ -845,6 +869,28 @@ async function dbDeleteAllRecetas() {
   const rid = currentRestaurant.id;
   const {error} = await sb.from('recetas').delete().eq('restaurante_id', rid);
   if (error) throw new Error('Eliminar recetas: ' + error.message);
+}
+
+async function dbDeleteAllStock() {
+  const rid = currentRestaurant.id;
+  const {error} = await sb.from('stock').delete().eq('restaurante_id', rid);
+  if (error) throw new Error('Eliminar stock: ' + error.message);
+}
+
+async function limpiarStock() {
+  const n = state.stock.length;
+  if (n === 0) { alert('No hay productos en el stock.'); return; }
+  if (!confirm(`¿Borrar los ${n} productos del stock de "${currentRestaurant.nombre}"?\nSe perderán todos los productos, cantidades y precios.\n\nEsta acción no se puede deshacer.`)) return;
+  const confirmText = prompt('Escribe BORRAR para confirmar:');
+  if (confirmText !== 'BORRAR') { alert('Cancelado.'); return; }
+  try {
+    await dbDeleteAllStock();
+    state.stock = [];
+    renderStock(); renderResumen(); renderOptim();
+    alert(`✓ ${n} producto${n!==1?'s':''} eliminado${n!==1?'s':''} del stock.`);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 // ─── DB: VENTAS ───────────────────────────────────────────────
@@ -1108,7 +1154,7 @@ function renderResumen() {
       <div class="metric-card accent-amber">
         <div class="m-label">Coste ingredientes</div><div class="m-value">${fmt(totalCosto)}</div><div class="m-sub">${fmtN(totalVentas>0?(totalCosto/totalVentas)*100:0)}% sobre ventas</div>
       </div>
-      <div class="metric-card ${margenTotal>=60?'accent-green':margenTotal>=40?'accent-amber':'accent-red'}">
+      <div class="metric-card ${margenTotal>=70?'accent-green':margenTotal>=60?'accent-amber':'accent-red'}">
         <div class="m-label">Margen medio</div><div class="m-value">${fmtN(margenTotal)}%</div><div class="m-sub">Sobre precio de venta</div>
       </div>
     </div>
@@ -1288,10 +1334,11 @@ function importarCSVVentas(event) {
     .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
 
   const detectCols = header => {
-    const nameIdx    = header.findIndex(h => ['nombre','producto','articulo','plato','descripcion','item','concepto'].some(k=>h.includes(k)));
-    let   qtyIdx     = header.findIndex(h => ['unidades','cantidad','uds','qty','vendido','vendidas','unid'].some(k=>h.includes(k)));
-    if (qtyIdx===-1) qtyIdx = header.findIndex(h => h.includes('total') && !h.includes('importe'));
-    const importeIdx = header.findIndex(h => ['importe','ingreso','revenue'].some(k=>h.includes(k)));
+    const nameIdx    = header.findIndex(h => ['nombre','producto','articulo','plato','descripcion','item','concepto','referencia','descripcion_articulo','article','product'].some(k=>h.includes(k)));
+    let   qtyIdx     = header.findIndex(h => ['unidades','cantidad','uds','qty','vendido','vendidas','unid','cant','uds_vendidas','total_uds','num'].some(k=>h.includes(k)));
+    if (qtyIdx===-1) qtyIdx = header.findIndex(h => h.includes('total') && !h.includes('importe') && !h.includes('precio'));
+    let   importeIdx = header.findIndex(h => ['importe','ingreso','revenue','total_venta','precio_venta','venta_total','amount','facturado','importe_total','total_importe','euros','ventas'].some(k=>h.includes(k)));
+    if (importeIdx===-1) importeIdx = header.findIndex(h => ['total','precio','pvp','price','venta'].some(k=>h===k));
     return {nameIdx, qtyIdx, importeIdx};
   };
 
@@ -1308,6 +1355,10 @@ function importarCSVVentas(event) {
     const hayPvp  = pendientes.some(p=>p.pvp>0);
     document.getElementById('csv-preview').innerHTML = `
       <div class="section-label" style="margin-bottom:6px">Vista previa — ${pendientes.length} líneas detectadas</div>
+      ${!hayPvp?`<div class="alert warn" style="margin-bottom:10px">
+        ⚠️ No se detectó columna de importe — el PVP no se calculará automáticamente. Puedes editarlo en Recetas después.
+        <br><small style="color:var(--text3)">Columnas reconocidas: importe, ingreso, total, precio, pvp, venta…</small>
+      </div>`:''}
       ${nuevas>0?`<div class="alert info" style="margin-bottom:10px">
         ✨ <strong>${nuevas} producto${nuevas>1?'s':''} nuevo${nuevas>1?'s':''}</strong> no exist${nuevas===1?'e':'en'} en recetas — se crear${nuevas===1?'á':'án'} automáticamente${hayPvp?' con PVP calculado del CSV':''}.
       </div>`:''}
@@ -1353,7 +1404,19 @@ function importarCSVVentas(event) {
       const delim = firstLine.includes('\t')?'\t':firstLine.includes(';')?';':',';
       const lines = text.split(/\r?\n/).filter(l=>l.trim());
       if (lines.length<2) { alert('El archivo parece vacío'); return; }
-      const header = lines[0].split(delim).map(norm);
+      // Parser RFC 4180: respeta campos entre comillas que contengan el delimitador
+      const parseRow = line => {
+        const cols=[]; let cur='', inQ=false;
+        for(let i=0;i<line.length;i++){
+          const c=line[i];
+          if(c==='"'){ if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ; }
+          else if(c===delim&&!inQ){ cols.push(cur.trim()); cur=''; }
+          else cur+=c;
+        }
+        cols.push(cur.trim());
+        return cols;
+      };
+      const header = parseRow(lines[0]).map(norm);
       const {nameIdx, qtyIdx, importeIdx} = detectCols(header);
       if (nameIdx===-1||qtyIdx===-1) {
         preview.innerHTML=`<div class="alert danger">No se detectaron columnas correctas.<br><strong>Encontradas:</strong> ${header.map((h,i)=>`[${i}] ${h}`).join(' · ')}</div>`;
@@ -1361,8 +1424,8 @@ function importarCSVVentas(event) {
       }
       const rawRows=[];
       for(let i=1;i<lines.length;i++){
-        const cols=lines[i].split(delim).map(c=>c.trim().replace(/^["']|["']$/g,''));
-        const nombre=cols[nameIdx]||''; const qty=parseInt(cols[qtyIdx])||0;
+        const cols=parseRow(lines[i]);
+        const nombre=cols[nameIdx]||''; const qty=parseInt((cols[qtyIdx]||'').replace(',','.'))||0;
         const importe=importeIdx>=0?parseFloat((cols[importeIdx]||'').replace(',','.'))||0:0;
         if(nombre&&qty>0) rawRows.push({nombre, qty, pvp: qty>0&&importe>0?Math.round(importe/qty*100)/100:0});
       }
@@ -1440,18 +1503,64 @@ async function confirmarImportCSV() {
   }
 }
 
+// Calcula y aplica descuentos de stock para una receta (normal o menú)
+function calcStockDeductions(receta, unidades) {
+  const accumulator = {}; // stockId → nueva cantidad
+  const applyIngr = (ingredientes, factor) => {
+    ingredientes.forEach(ing => {
+      const p = state.stock.find(x => x.id === ing.stockId); if (!p) return;
+      const prev = accumulator[p.id] !== undefined ? accumulator[p.id] : p.cantidad;
+      accumulator[p.id] = Math.max(0, Math.round((prev - ing.cantidad * unidades * factor) * 1000) / 1000);
+    });
+  };
+  if (receta.esMenu && receta.opciones.length > 0) {
+    const n = receta.opciones.length;
+    receta.opciones.forEach(opId => {
+      const sub = state.recetas.find(x => x.id === opId);
+      if (sub && !sub.esMenu) applyIngr(sub.ingredientes, 1 / n);
+    });
+  } else {
+    applyIngr(receta.ingredientes, 1);
+  }
+  // Aplicar al state y devolver lista de updates
+  return Object.entries(accumulator).map(([id, cantidad]) => {
+    const p = state.stock.find(x => x.id === id);
+    if (p) p.cantidad = cantidad;
+    return { id, cantidad };
+  });
+}
+
+// Revierte descuentos al eliminar una venta
+function calcStockRestores(receta, unidades) {
+  const accumulator = {};
+  const applyIngr = (ingredientes, factor) => {
+    ingredientes.forEach(ing => {
+      const p = state.stock.find(x => x.id === ing.stockId); if (!p) return;
+      const prev = accumulator[p.id] !== undefined ? accumulator[p.id] : p.cantidad;
+      accumulator[p.id] = Math.round((prev + ing.cantidad * unidades * factor) * 1000) / 1000;
+    });
+  };
+  if (receta.esMenu && receta.opciones.length > 0) {
+    const n = receta.opciones.length;
+    receta.opciones.forEach(opId => {
+      const sub = state.recetas.find(x => x.id === opId);
+      if (sub && !sub.esMenu) applyIngr(sub.ingredientes, 1 / n);
+    });
+  } else {
+    applyIngr(receta.ingredientes, 1);
+  }
+  return Object.entries(accumulator).map(([id, cantidad]) => {
+    const p = state.stock.find(x => x.id === id);
+    if (p) p.cantidad = cantidad;
+    return { id, cantidad };
+  });
+}
+
 async function registrarVenta() {
   const recetaId = document.getElementById('sell-receta').value;
   const unidades = parseInt(document.getElementById('sell-qty').value)||1;
   const receta = state.recetas.find(r=>r.id===recetaId); if(!receta) return;
-  const stockUpdates = [];
-  receta.ingredientes.forEach(ing=>{
-    const p=state.stock.find(x=>x.id===ing.stockId);
-    if(p) {
-      p.cantidad=Math.max(0,Math.round((p.cantidad-ing.cantidad*unidades)*1000)/1000);
-      stockUpdates.push({id:p.id, cantidad:p.cantidad});
-    }
-  });
+  const stockUpdates = calcStockDeductions(receta, unidades);
   const venta = {id:uid(), recetaId, unidades, createdAt: new Date().toISOString(), tipo:'receta', consumos:[]};
   state.ventas.push(venta);
   renderVentas();
@@ -1468,10 +1577,7 @@ async function eliminarVenta(id) {
     });
   } else {
     const r=state.recetas.find(x=>x.id===v.recetaId);
-    if(r) r.ingredientes.forEach(ing=>{
-      const p=state.stock.find(x=>x.id===ing.stockId);
-      if(p) { p.cantidad=Math.round((p.cantidad+ing.cantidad*v.unidades)*1000)/1000; stockRestores.push({id:p.id,cantidad:p.cantidad}); }
-    });
+    if(r) stockRestores.push(...calcStockRestores(r, v.unidades));
   }
   state.ventas=state.ventas.filter(x=>x.id!==id);
   renderVentas();
@@ -1906,6 +2012,7 @@ function renderStock() {
             ${proveedores.map(p=>`<option value="${p}" ${stockProvFilter===p?'selected':''}>${p}</option>`).join('')}
           </select>`:''}
           <input type="text" id="stock-search" placeholder="Buscar…" oninput="renderStock()" style="width:150px">
+          <button class="btn sm danger" onclick="limpiarStock()">Borrar todo</button>
         </div>
       </div>
       <div class="card-body no-pad">
@@ -2076,6 +2183,7 @@ async function guardarProducto(id) {
 // ─── RECETAS ──────────────────────────────────────────────────
 let recetasCatFilter = 'Todos';
 let tmpIngredientes  = [];
+let tmpOpciones      = [];
 
 function renderRecetas() {
   const pg = document.getElementById('page-recetas');
@@ -2103,11 +2211,12 @@ function renderRecetas() {
         <div class="filter-tab ${recetasCatFilter==='Todos'?'active':''}" onclick="setRecetasCat('Todos')">Todo</div>
         ${getCategorias().map(c=>`<div class="filter-tab ${recetasCatFilter===c?'active':''}" onclick="setRecetasCat('${c}')">${c}</div>`).join('')}
       </div>
-      <div style="display:flex;gap:4px;margin-left:auto">
+      <div style="display:flex;gap:4px;align-items:center;margin-left:auto">
         ${sortBtn('nombre','A-Z')}
         ${sortBtn('margen','Margen')}
         ${sortBtn('pvp','PVP')}
         ${sortBtn('coste','Coste')}
+        <button class="btn sm danger" onclick="confirmarBorrarRecetas()" style="margin-left:8px">Borrar todo</button>
       </div>
     </div>
     ${filtradas.length===0 ? `<div class="empty-state"><div class="emoji">🍽</div>No hay recetas en esta categoría</div>` : `
@@ -2120,9 +2229,10 @@ function renderRecetas() {
           <div class="recipe-card-header">
             <div>
               <div class="recipe-name">${r.nombre}</div>
-              <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+              <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
                 <span class="cat-badge">${r.categoria}</span>
                 <span style="font-size:12px;color:var(--text2)">PVP: ${fmt(r.pvp)}</span>
+                ${r.costeDirecto>0?`<span style="font-size:10px;background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border);border-radius:4px;padding:1px 6px">coste directo</span>`:''}
               </div>
               ${porcionesHtml?`<div style="margin-top:4px">${porcionesHtml}</div>`:''}
             </div>
@@ -2134,11 +2244,19 @@ function renderRecetas() {
               <div class="recipe-stat"><div class="rs-label">Beneficio/ud</div><div class="rs-value mono" style="color:${r.pvp-c>=0?'var(--teal)':'var(--red)'}">${fmt(r.pvp-c)}</div></div>
             </div>
             <div class="margin-bar" style="margin-bottom:12px"><div class="margin-fill ${mc}" style="width:${Math.min(mg,100)}%"></div></div>
+            ${r.esMenu ? `
+            <div class="section-label">Platos del menú (${r.opciones.length})</div>
+            <div>${r.opciones.map(opId=>{
+              const sub=state.recetas.find(x=>x.id===opId);
+              return sub?`<span class="ingr-tag" style="border-color:var(--teal-border);color:var(--teal)">${sub.nombre}</span>`:'';
+            }).join('')||'<span style="font-size:12px;color:var(--text3)">Sin platos configurados</span>'}</div>
+            ` : `
             <div class="section-label">Ingredientes</div>
             <div>${r.ingredientes.map(ing=>{
               const p=state.stock.find(x=>x.id===ing.stockId);
               return p?`<span class="ingr-tag">${p.nombre} <span style="color:var(--text3)">${fmtIngr(ing.cantidad, p.unidad)}</span></span>`:'';
             }).join('')}</div>
+            `}
             <div class="recipe-actions">
               <button class="btn sm" onclick="showModalReceta('${r.id}')">Editar</button>
               <button class="btn sm danger" onclick="eliminarReceta('${r.id}')">Eliminar</button>
@@ -2169,11 +2287,14 @@ async function eliminarReceta(id) {
 function showModalReceta(id) {
   const r=id?state.recetas.find(x=>x.id===id):null;
   tmpIngredientes=r?r.ingredientes.map(i=>({...i})):[];
+  tmpOpciones=r?[...(r.opciones||[])]:[];
   buildModalRecetaHTML(r);
 }
 
 function buildModalRecetaHTML(r) {
-  const costo=tmpIngredientes.reduce((s,ing)=>{const p=state.stock.find(x=>x.id===ing.stockId);return s+(p?p.precioUnd*ing.cantidad:0);},0);
+  const costeDirectoVal=r?.costeDirecto||0;
+  const costoIngr=tmpIngredientes.reduce((s,ing)=>{const p=state.stock.find(x=>x.id===ing.stockId);return s+(p?p.precioUnd*ing.cantidad:0);},0);
+  const costo=costeDirectoVal>0?costeDirectoVal:costoIngr;
   const pvpVal=parseFloat(document.getElementById('r-pvp')?.value)||(r?r.pvp:0);
   const mg=pvpVal>0?((pvpVal-costo)/pvpVal*100):0;
   document.getElementById('modal-root').innerHTML = `
@@ -2188,33 +2309,55 @@ function buildModalRecetaHTML(r) {
           <div class="form-group"><label>Categoría</label>
             <select id="r-categoria">${getCategorias().map(c=>`<option ${r&&r.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
           </div>
-          <div class="divider"></div>
-          <div class="section-label">Ingredientes (escandallo)</div>
-          <div id="ingr-modal-list" class="ingr-modal-list">${buildIngrList()}</div>
-
-          <!-- IA -->
-          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
-            <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✨ Introducir con IA</div>
-            <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Escribe en lenguaje natural. La IA buscará cada ingrediente en tu stock automáticamente.</div>
-            <div style="display:flex;gap:8px;align-items:flex-start">
-              <textarea id="ingr-ia-text" placeholder="Ej: 100g patata, 200g entraña, 2 cebollas, 1L nata..." style="flex:1;min-height:54px;resize:vertical;font-size:13px;font-family:inherit;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></textarea>
-              <button class="btn sm primary" onclick="detectarIngredientesIA()" style="flex-shrink:0;white-space:nowrap">Detectar</button>
-            </div>
-            <div id="ingr-ia-results"></div>
+          <!-- Toggle menú compuesto -->
+          <div style="background:var(--teal-bg);border:1px solid var(--teal-border);border-radius:var(--radius-sm);padding:10px;margin-bottom:2px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:3px">
+              <input type="checkbox" id="r-es-menu" ${r?.esMenu?'checked':''} onchange="toggleMenuMode(this.checked)">
+              <span style="font-weight:600;font-size:13px">Menú / plato combinado</span>
+            </label>
+            <div style="font-size:11px;color:var(--text2)">Al vender, descuenta 1/N de los ingredientes de cada plato del menú. El coste se calcula como media.</div>
           </div>
 
-          <!-- MANUAL con búsqueda -->
-          <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">🔍 Buscar y añadir manualmente</div>
-          <div class="ingr-add-row">
-            <div>
-              <label>Buscar producto</label>
-              <input id="ingr-search" type="text" placeholder="Escribe para filtrar..." oninput="filterIngrSelect()" style="margin-bottom:5px">
-              <select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select>
+          <!-- Sección ingredientes (oculta en modo menú) -->
+          <div id="ingr-section" ${r?.esMenu?'style="display:none"':''}>
+            <div class="form-group" style="margin-top:10px">
+              <label>Coste directo estimado (€/ud) <span style="font-weight:400;color:var(--text3)">— opcional</span></label>
+              <input id="r-coste-directo" type="number" step="0.01" min="0" value="${r?.costeDirecto||''}" placeholder="Ej: 5.50 — deja en blanco si usas ingredientes" oninput="refreshCostPreview()">
             </div>
-            <div><label>Cantidad</label><input id="ingr-qty" type="number" step="0.01" value="0.1" min="0.001"></div>
-            <div style="display:flex;align-items:flex-end"><button class="btn" onclick="agregarIngr()" style="width:100%">+ Añadir</button></div>
+            <div class="divider"></div>
+            <div class="section-label">Ingredientes (escandallo)</div>
+            <div id="ingr-modal-list" class="ingr-modal-list">${buildIngrList()}</div>
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
+              <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✨ Introducir con IA</div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Escribe en lenguaje natural. La IA buscará cada ingrediente en tu stock automáticamente.</div>
+              <div style="display:flex;gap:8px;align-items:flex-start">
+                <textarea id="ingr-ia-text" placeholder="Ej: 100g patata, 200g entraña, 2 cebollas, 1L nata..." style="flex:1;min-height:54px;resize:vertical;font-size:13px;font-family:inherit;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></textarea>
+                <button class="btn sm primary" onclick="detectarIngredientesIA()" style="flex-shrink:0;white-space:nowrap">Detectar</button>
+              </div>
+              <div id="ingr-ia-results"></div>
+            </div>
+            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">🔍 Buscar y añadir manualmente</div>
+            <div class="ingr-add-row">
+              <div>
+                <label>Buscar producto</label>
+                <input id="ingr-search" type="text" placeholder="Escribe para filtrar..." oninput="filterIngrSelect()" style="margin-bottom:5px">
+                <select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select>
+              </div>
+              <div><label>Cantidad</label><input id="ingr-qty" type="number" step="0.01" value="0.1" min="0.001"></div>
+              <div style="display:flex;align-items:flex-end"><button class="btn" onclick="agregarIngr()" style="width:100%">+ Añadir</button></div>
+            </div>
           </div>
-          <div class="cost-preview" id="cost-preview" style="${tmpIngredientes.length===0&&!pvpVal?'display:none':''}">
+
+          <!-- Sección platos del menú (visible en modo menú) -->
+          <div id="menu-opciones-section" ${!r?.esMenu?'style="display:none"':''}>
+            <div class="divider"></div>
+            <div class="section-label">Platos que forman el menú</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Selecciona los platos disponibles. Al vender 1 menú se descuenta 1/N de los ingredientes de cada uno.</div>
+            <div id="menu-opciones-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">${buildMenuOpcionesList()}</div>
+            <div id="menu-cost-preview" style="margin-top:8px"></div>
+          </div>
+
+          <div class="cost-preview" id="cost-preview" style="${(tmpIngredientes.length===0&&!pvpVal&&!r?.esMenu)?'display:none':''}">
             <div class="cp-item"><div class="cp-label">Coste total</div><div class="cp-value mono">${fmt(costo)}</div></div>
             <div class="cp-item"><div class="cp-label">Margen</div><div class="cp-value mono" style="color:${margenColor(mg)}">${fmtN(mg)}%</div></div>
             <div class="cp-item"><div class="cp-label">Beneficio/ud</div><div class="cp-value mono" style="color:${pvpVal-costo>=0?'var(--teal)':'var(--red)'}">${fmt(pvpVal-costo)}</div></div>
@@ -2236,13 +2379,24 @@ function buildIngrList() {
 function refreshIngrList() { const el=document.getElementById('ingr-modal-list'); if(el) el.innerHTML=buildIngrList(); refreshCostPreview(); }
 
 function refreshCostPreview() {
-  const costo=tmpIngredientes.reduce((s,ing)=>{const p=state.stock.find(x=>x.id===ing.stockId);return s+(p?p.precioUnd*ing.cantidad:0);},0);
-  const pvpVal=parseFloat(document.getElementById('r-pvp')?.value)||0;
-  const mg=pvpVal>0?((pvpVal-costo)/pvpVal*100):0;
-  const el=document.getElementById('cost-preview'); if(!el) return;
-  if(tmpIngredientes.length===0&&!pvpVal){el.style.display='none';return;}
+  const esMenu = document.getElementById('r-es-menu')?.checked || false;
+  const pvpVal = parseFloat(document.getElementById('r-pvp')?.value)||0;
+  let costo = 0, modeLabel = '';
+  if (esMenu) {
+    const subs = tmpOpciones.map(id => state.recetas.find(x => x.id === id)).filter(Boolean);
+    costo = subs.length > 0 ? subs.reduce((s,r)=>s+costoReceta(r),0)/subs.length : 0;
+    modeLabel = '<span style="font-size:10px;color:var(--teal);margin-left:4px">(media menú)</span>';
+  } else {
+    const costeDirectoVal = parseFloat(document.getElementById('r-coste-directo')?.value)||0;
+    const costoIngr = tmpIngredientes.reduce((s,ing)=>{const p=state.stock.find(x=>x.id===ing.stockId);return s+(p?p.precioUnd*ing.cantidad:0);},0);
+    costo = costeDirectoVal>0?costeDirectoVal:costoIngr;
+    modeLabel = costeDirectoVal>0?'<span style="font-size:10px;color:var(--amber);margin-left:4px">(coste directo)</span>':'';
+  }
+  const mg = pvpVal>0?((pvpVal-costo)/pvpVal*100):0;
+  const el = document.getElementById('cost-preview'); if(!el) return;
+  if(!esMenu && tmpIngredientes.length===0 && !parseFloat(document.getElementById('r-coste-directo')?.value) && !pvpVal){el.style.display='none';return;}
   el.style.display='flex';
-  el.innerHTML=`<div class="cp-item"><div class="cp-label">Coste total</div><div class="cp-value mono">${fmt(costo)}</div></div><div class="cp-item"><div class="cp-label">Margen</div><div class="cp-value mono" style="color:${margenColor(mg)}">${fmtN(mg)}%</div></div><div class="cp-item"><div class="cp-label">Beneficio/ud</div><div class="cp-value mono" style="color:${pvpVal-costo>=0?'var(--teal)':'var(--red)'}">${fmt(pvpVal-costo)}</div></div>`;
+  el.innerHTML=`<div class="cp-item"><div class="cp-label">Coste${modeLabel}</div><div class="cp-value mono">${fmt(costo)}</div></div><div class="cp-item"><div class="cp-label">Margen</div><div class="cp-value mono" style="color:${margenColor(mg)}">${fmtN(mg)}%</div></div><div class="cp-item"><div class="cp-label">Beneficio/ud</div><div class="cp-value mono" style="color:${pvpVal-costo>=0?'var(--teal)':'var(--red)'}">${fmt(pvpVal-costo)}</div></div>`;
 }
 
 function quitarIngr(idx) { tmpIngredientes.splice(idx,1); refreshIngrList(); }
@@ -2262,6 +2416,52 @@ function filterIngrSelect() {
   sel.innerHTML = state.stock
     .filter(p => !q || p.nombre.toLowerCase().includes(q))
     .map(p => `<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('');
+}
+
+function toggleMenuMode(checked) {
+  const ingSection  = document.getElementById('ingr-section');
+  const menuSection = document.getElementById('menu-opciones-section');
+  if (ingSection)  ingSection.style.display  = checked ? 'none' : '';
+  if (menuSection) menuSection.style.display = checked ? '' : 'none';
+  refreshMenuCostPreview();
+}
+
+function buildMenuOpcionesList() {
+  const candidatos = state.recetas.filter(r => !r.esMenu);
+  if (candidatos.length === 0) return '<div style="padding:12px;font-size:13px;color:var(--text3)">No hay recetas disponibles — crea platos primero.</div>';
+  return candidatos.map(r => {
+    const checked = tmpOpciones.includes(r.id);
+    const c = costoReceta(r);
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);${checked?'background:var(--teal-bg)':''}">
+      <input type="checkbox" value="${r.id}" ${checked?'checked':''} onchange="toggleOpcion('${r.id}',this.checked)">
+      <span style="flex:1;font-size:13px">${r.nombre}</span>
+      <span style="font-size:11px;color:var(--text3)">${fmt(c)} coste</span>
+    </label>`;
+  }).join('');
+}
+
+function toggleOpcion(id, checked) {
+  if (checked) { if (!tmpOpciones.includes(id)) tmpOpciones.push(id); }
+  else tmpOpciones = tmpOpciones.filter(x => x !== id);
+  // Refrescar fondo de la fila
+  const listEl = document.getElementById('menu-opciones-list');
+  if (listEl) listEl.innerHTML = buildMenuOpcionesList();
+  refreshMenuCostPreview();
+  refreshCostPreview();
+}
+
+function refreshMenuCostPreview() {
+  const el = document.getElementById('menu-cost-preview'); if (!el) return;
+  if (tmpOpciones.length === 0) { el.innerHTML = ''; return; }
+  const subs = tmpOpciones.map(id => state.recetas.find(x => x.id === id)).filter(Boolean);
+  const avgCost = subs.reduce((s, r) => s + costoReceta(r), 0) / subs.length;
+  const pvp = parseFloat(document.getElementById('r-pvp')?.value) || 0;
+  const mg = pvp > 0 ? ((pvp - avgCost) / pvp * 100) : 0;
+  el.innerHTML = `<div style="display:flex;gap:16px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px">
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Platos</div><div style="font-weight:600">${tmpOpciones.length}</div></div>
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Coste medio</div><div style="font-weight:600;color:var(--amber)">${fmt(avgCost)}</div></div>
+    <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Margen estimado</div><div style="font-weight:600;color:${margenColor(mg)}">${fmtN(mg)}%</div></div>
+  </div>`;
 }
 
 let ingrAiResults = [];
@@ -2333,7 +2533,12 @@ async function guardarReceta(id) {
   const nombre=document.getElementById('r-nombre').value.trim();
   const pvp=parseFloat(document.getElementById('r-pvp').value)||0;
   if(!nombre){alert('Introduce el nombre del plato');return;}
-  const fields={nombre,pvp,categoria:document.getElementById('r-categoria').value,ingredientes:[...tmpIngredientes]};
+  const costeDirecto=parseFloat(document.getElementById('r-coste-directo')?.value)||0;
+  const esMenu=document.getElementById('r-es-menu')?.checked||false;
+  if(esMenu && tmpOpciones.length===0){alert('Añade al menos un plato al menú');return;}
+  const fields={nombre,pvp,categoria:document.getElementById('r-categoria').value,
+    ingredientes:esMenu?[]:([...tmpIngredientes]),
+    costeDirecto, esMenu, opciones:esMenu?[...tmpOpciones]:[]};
   let receta;
   if(id) {
     receta=state.recetas.find(x=>x.id===id);
@@ -3179,12 +3384,26 @@ function detectarDuplicadoAlbaran(lineas) {
   if (!lineas.length || !state.albaranes.length) return null;
   let mejor = null, mejorScore = 0;
   for (const alb of state.albaranes) {
-    const existentes = alb.lineas.map(l => l.nombre);
-    const coincidencias = lineas.filter(l => existentes.some(e => nombresSimilares(l.nombre, e)));
-    const score = coincidencias.length / lineas.length;
-    if (score > mejorScore && score >= 0.5) {
-      mejorScore = score;
-      mejor = { albaran: alb, coincidencias: coincidencias.length, total: lineas.length, pct: Math.round(score*100) };
+    // Descartar si la diferencia de líneas es grande (no puede ser el mismo albarán)
+    if (Math.abs(alb.lineas.length - lineas.length) > Math.max(1, Math.round(lineas.length * 0.15))) continue;
+    let coincidencias = 0, cantidadMatch = 0;
+    for (const l of lineas) {
+      const match = alb.lineas.find(e => nombresSimilares(l.nombre, e.nombre));
+      if (match) {
+        coincidencias++;
+        if (l.cantidad > 0 && match.cantidad > 0) {
+          const diff = Math.abs(l.cantidad - match.cantidad) / Math.max(l.cantidad, match.cantidad);
+          if (diff < 0.1) cantidadMatch++;
+        }
+      }
+    }
+    const score = coincidencias / lineas.length;
+    // Solo avisar si hay ≥80% de nombres iguales Y las cantidades también coinciden
+    const cantidadPct = coincidencias > 0 ? cantidadMatch / coincidencias : 0;
+    const ajustado = score * (0.4 + 0.6 * cantidadPct);
+    if (ajustado > mejorScore && score >= 0.8 && cantidadPct >= 0.6) {
+      mejorScore = ajustado;
+      mejor = { albaran: alb, coincidencias, total: lineas.length, pct: Math.round(score*100) };
     }
   }
   return mejor;
