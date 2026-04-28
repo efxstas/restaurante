@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>RestaurantOS — MVP</title>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -258,11 +258,21 @@
       .sell-row .fg, .sell-row > div { width:100% !important; }
       .sell-row .btn { width:100%; justify-content:center; }
       .albaran-grid-2col { grid-template-columns:1fr !important; }
-      .modal { max-width:100% !important; max-height:95vh; margin:0; border-radius:var(--radius) var(--radius) 0 0; }
+      .modal { max-width:100% !important; max-height:92vh; margin:0; border-radius:var(--radius) var(--radius) 0 0; }
       .modal-overlay { align-items:flex-end; padding:0; }
       .modal-body { padding:16px; }
       .modal-header { padding:14px 16px; }
-      .modal-footer { padding:12px 16px; }
+      .modal-footer { padding:12px 16px; position:sticky; bottom:0; background:var(--surface); z-index:2; }
+      /* iOS: prevent auto-zoom on input focus */
+      input[type=text], input[type=number], input[type=email],
+      input[type=password], select, textarea { font-size: 16px !important; }
+      /* Scan: hide drop zone on mobile, show buttons instead */
+      .albaran-drop-desktop { display:none !important; }
+      .scan-buttons-mobile { display:flex !important; }
+      /* Batch section: collapse on mobile */
+      .batch-section-mobile-collapse { display:none; }
+      /* Sticky confirm bar */
+      .sticky-confirm-bar { position:sticky; bottom:0; z-index:10; background:var(--surface); border-top:2px solid var(--amber); padding:12px 16px; display:flex; gap:8px; box-shadow:0 -4px 16px rgba(0,0,0,0.12); }
     }
     @media (max-width: 480px) {
       .metrics-grid { grid-template-columns:1fr; }
@@ -270,6 +280,11 @@
       .form-row.cols3 { grid-template-columns:1fr; }
       .content { padding:12px; }
       .topbar { height:50px; }
+    }
+    /* Desktop: hide mobile-only elements */
+    @media (min-width: 769px) {
+      .scan-buttons-mobile { display:none !important; }
+      .sticky-confirm-bar { display:none !important; }
     }
   </style>
 </head>
@@ -2267,7 +2282,11 @@ function renderRecetas() {
         <button class="btn sm danger" onclick="confirmarBorrarRecetas()" style="margin-left:8px">Borrar todo</button>
       </div>
     </div>
-    ${filtradas.length===0 ? `<div class="empty-state"><div class="emoji">🍽</div>No hay recetas en esta categoría</div>` : `
+    ${filtradas.length===0 ? `<div class="empty-state">
+      <div class="emoji">🍽</div>
+      <div style="margin-bottom:16px;font-size:14px">${recetasCatFilter==='Todos'?'Aún no tienes ninguna receta. Crea la primera para calcular márgenes y controlar el stock.':'No hay recetas en esta categoría.'}</div>
+      ${recetasCatFilter==='Todos'?`<button class="btn primary" style="font-size:15px;padding:12px 24px" onclick="showModalReceta(null)">+ Crear primera receta</button>`:''}
+    </div>` : `
     <div class="recipes-grid">
       ${filtradas.map(r=>{
         const c=costoReceta(r), mg=margenReceta(r), mc=margenClass(mg);
@@ -2357,53 +2376,62 @@ function buildModalRecetaHTML(r) {
           <div class="form-group"><label>Categoría</label>
             <select id="r-categoria">${getCategorias().map(c=>`<option ${r&&r.categoria===c?'selected':''}>${c}</option>`).join('')}</select>
           </div>
-          <!-- Toggle menú compuesto -->
-          <div style="background:var(--teal-bg);border:1px solid var(--teal-border);border-radius:var(--radius-sm);padding:10px;margin-bottom:2px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:3px">
-              <input type="checkbox" id="r-es-menu" ${r?.esMenu?'checked':''} onchange="toggleMenuMode(this.checked)">
-              <span style="font-weight:600;font-size:13px">Menú / plato combinado</span>
-            </label>
-            <div style="font-size:11px;color:var(--text2)">Al vender, descuenta 1/N de los ingredientes de cada plato del menú. El coste se calcula como media.</div>
-          </div>
-
-          <!-- Sección ingredientes (oculta en modo menú) -->
+          <!-- Sección ingredientes (principal) -->
           <div id="ingr-section" ${r?.esMenu?'style="display:none"':''}>
-            <div class="form-group" style="margin-top:10px">
-              <label>Coste directo estimado (€/ud) <span style="font-weight:400;color:var(--text3)">— opcional</span></label>
-              <input id="r-coste-directo" type="number" step="0.01" min="0" value="${r?.costeDirecto||''}" placeholder="Ej: 5.50 — deja en blanco si usas ingredientes" oninput="refreshCostPreview()">
-            </div>
             <div class="divider"></div>
             <div class="section-label">Ingredientes (escandallo)</div>
             <div id="ingr-modal-list" class="ingr-modal-list">${buildIngrList()}</div>
-            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
-              <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">✨ Introducir con IA</div>
-              <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Escribe en lenguaje natural. La IA buscará cada ingrediente en tu stock automáticamente.</div>
+            <!-- IA detection -->
+            <div style="background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:var(--radius-sm);padding:12px;margin-bottom:10px">
+              <div style="font-size:12px;font-weight:700;color:var(--amber);margin-bottom:6px">✨ Añadir con IA — escribe los ingredientes</div>
               <div style="display:flex;gap:8px;align-items:flex-start">
-                <textarea id="ingr-ia-text" placeholder="Ej: 100g patata, 200g entraña, 2 cebollas, 1L nata..." style="flex:1;min-height:54px;resize:vertical;font-size:13px;font-family:inherit;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></textarea>
+                <textarea id="ingr-ia-text" placeholder="Ej: 100g patata, 200g entraña, 2 cebollas, 1L nata..." style="flex:1;min-height:54px;resize:vertical;font-family:inherit;padding:8px;border:1px solid var(--amber-border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)"></textarea>
                 <button class="btn sm primary" onclick="detectarIngredientesIA()" style="flex-shrink:0;white-space:nowrap">Detectar</button>
               </div>
               <div id="ingr-ia-results"></div>
             </div>
-            <div style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">🔍 Buscar y añadir manualmente</div>
-            <div class="ingr-add-row">
-              <div>
-                <label>Buscar producto</label>
-                <input id="ingr-search" type="text" placeholder="Escribe para filtrar..." oninput="filterIngrSelect()" style="margin-bottom:5px">
-                <select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select>
+            <!-- Manual add -->
+            <details style="margin-bottom:10px">
+              <summary style="font-size:12px;font-weight:600;color:var(--text2);cursor:pointer;user-select:none;margin-bottom:6px">🔍 Buscar y añadir manualmente</summary>
+              <div class="ingr-add-row" style="margin-top:8px">
+                <div>
+                  <label>Buscar producto</label>
+                  <input id="ingr-search" type="text" placeholder="Escribe para filtrar..." oninput="filterIngrSelect()" style="margin-bottom:5px">
+                  <select id="ingr-prod">${state.stock.map(p=>`<option value="${p.id}">${p.nombre} (${p.unidad})</option>`).join('')}</select>
+                </div>
+                <div><label>Cantidad</label><input id="ingr-qty" type="number" step="0.01" value="0.1" min="0.001"></div>
+                <div style="display:flex;align-items:flex-end"><button class="btn" onclick="agregarIngr()" style="width:100%">+ Añadir</button></div>
               </div>
-              <div><label>Cantidad</label><input id="ingr-qty" type="number" step="0.01" value="0.1" min="0.001"></div>
-              <div style="display:flex;align-items:flex-end"><button class="btn" onclick="agregarIngr()" style="width:100%">+ Añadir</button></div>
-            </div>
+            </details>
           </div>
 
           <!-- Sección platos del menú (visible en modo menú) -->
           <div id="menu-opciones-section" ${!r?.esMenu?'style="display:none"':''}>
             <div class="divider"></div>
             <div class="section-label">Platos que forman el menú</div>
-            <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Selecciona los platos disponibles. Al vender 1 menú se descuenta 1/N de los ingredientes de cada uno.</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Selecciona los platos disponibles. Al vender 1 menú se descuenta 1/N ingredientes de cada uno.</div>
             <div id="menu-opciones-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">${buildMenuOpcionesList()}</div>
             <div id="menu-cost-preview" style="margin-top:8px"></div>
           </div>
+
+          <!-- Opciones avanzadas (menú + coste directo) -->
+          <details style="margin-top:8px" ${r?.esMenu||r?.costeDirecto?'open':''}>
+            <summary style="font-size:12px;font-weight:600;color:var(--text3);cursor:pointer;user-select:none;padding:6px 0">⚙ Opciones avanzadas</summary>
+            <div style="margin-top:10px">
+              <!-- Toggle menú compuesto -->
+              <div style="background:var(--teal-bg);border:1px solid var(--teal-border);border-radius:var(--radius-sm);padding:10px;margin-bottom:10px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:3px">
+                  <input type="checkbox" id="r-es-menu" ${r?.esMenu?'checked':''} onchange="toggleMenuMode(this.checked)">
+                  <span style="font-weight:600;font-size:13px">Menú / plato combinado</span>
+                </label>
+                <div style="font-size:11px;color:var(--text2)">Al vender, descuenta 1/N de los ingredientes de cada plato del menú. El coste se calcula como media.</div>
+              </div>
+              <div class="form-group">
+                <label>Coste directo estimado (€/ud) <span style="font-weight:400;color:var(--text3)">— opcional, sobreescribe el escandallo</span></label>
+                <input id="r-coste-directo" type="number" step="0.01" min="0" value="${r?.costeDirecto||''}" placeholder="Ej: 5.50 — deja en blanco si usas ingredientes" oninput="refreshCostPreview()">
+              </div>
+            </div>
+          </details>
 
           <div class="cost-preview" id="cost-preview" style="${(tmpIngredientes.length===0&&!pvpVal&&!r?.esMenu)?'display:none':''}">
             <div class="cp-item"><div class="cp-label">Coste total</div><div class="cp-value mono">${fmt(costo)}</div></div>
@@ -2812,17 +2840,12 @@ let batchDefaultProveedor = '';
 function renderAlbaranes() {
   const pg = document.getElementById('page-albaranes');
   pg.innerHTML = `
-    <div class="alert info">
-      🤖 Sube una foto o varias a la vez y la IA leerá los productos automáticamente. Revisa las líneas antes de confirmar.
-    </div>
-
-    ${renderBatchSection()}
-
     <div class="albaran-grid-2col" style="display:grid;grid-template-columns:1fr 1.4fr;gap:20px;align-items:start">
       <div>
         <div class="card">
-          <div class="card-header"><h2>Foto del albarán</h2></div>
+          <div class="card-header"><h2>📷 Escanear albarán</h2></div>
           <div class="card-body">
+            <!-- Proveedor (siempre visible) -->
             <div style="margin-bottom:14px">
               <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Proveedor</label>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2831,16 +2854,39 @@ function renderAlbaranes() {
                   ${state.proveedores.map(p=>`<option value="${p.nombre}" ${albaranProveedor===p.nombre?'selected':''}>${p.nombre}</option>`).join('')}
                 </select>
                 <select id="proveedor-cat-default" onchange="onProveedorCatChange()" style="flex-shrink:0" title="Categoría por defecto para este proveedor">
-                  <option value="">Categoría auto (OCR)</option>
+                  <option value="">Categoría auto</option>
                   ${getCategorias().map(c=>`<option value="${c}" ${proveedorCatMap[albaranProveedor]===c?'selected':''}>${c}</option>`).join('')}
                 </select>
               </div>
-              <div style="font-size:11px;color:var(--text3);margin-top:4px">Asigna una categoría al proveedor para que sus productos se clasifiquen automáticamente</div>
-              <!-- Gestionar proveedores -->
+            </div>
+
+            <!-- MOBILE: dos botones grandes -->
+            <div class="scan-buttons-mobile" style="gap:10px;margin-bottom:14px;display:none">
+              <button class="btn primary" style="flex:1;justify-content:center;padding:14px;font-size:15px" onclick="document.getElementById('albaran-camera').click()">📷 Tomar foto</button>
+              <button class="btn" style="flex:1;justify-content:center;padding:14px;font-size:15px" onclick="document.getElementById('albaran-file').click()">🖼 Galería</button>
+            </div>
+
+            <!-- DESKTOP: drop zone -->
+            <div class="albaran-drop albaran-drop-desktop" id="albaran-drop" onclick="document.getElementById('albaran-file').click()"
+              ondragover="event.preventDefault();this.classList.add('drag-over')"
+              ondragleave="this.classList.remove('drag-over')"
+              ondrop="handleDrop(event)">
+              <div class="drop-icon">📄</div>
+              <div class="drop-text">Arrastra o pulsa para subir</div>
+              <div class="drop-sub">Foto del albarán (JPG, PNG)</div>
+            </div>
+
+            <!-- Inputs (siempre ocultos) -->
+            <input type="file" id="albaran-camera" accept="image/*" capture="environment" style="display:none" onchange="handleFileSelect(event)">
+            <input type="file" id="albaran-file" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
+            <div id="albaran-img-preview" class="albaran-preview"></div>
+
+            <!-- Gestionar proveedores (colapsado) -->
+            <details style="margin-top:12px">
+              <summary style="font-size:12px;color:var(--text3);cursor:pointer;user-select:none">⚙ Gestionar proveedores</summary>
               <div style="margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm)">
-                <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Gestionar proveedores</div>
                 <div style="display:flex;gap:6px;margin-bottom:8px">
-                  <input id="nuevo-prov-input" type="text" placeholder="Nombre del proveedor" style="flex:1;font-size:13px">
+                  <input id="nuevo-prov-input" type="text" placeholder="Nombre del proveedor">
                   <button class="btn sm primary" onclick="agregarProveedor()">+ Añadir</button>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -2853,17 +2899,7 @@ function renderAlbaranes() {
                       </span>`).join('')}
                 </div>
               </div>
-            </div>
-            <div class="albaran-drop" id="albaran-drop" onclick="document.getElementById('albaran-file').click()"
-              ondragover="event.preventDefault();this.classList.add('drag-over')"
-              ondragleave="this.classList.remove('drag-over')"
-              ondrop="handleDrop(event)">
-              <div class="drop-icon">📄</div>
-              <div class="drop-text">Pulsa o arrastra aquí</div>
-              <div class="drop-sub">Foto del albarán (JPG, PNG)</div>
-            </div>
-            <input type="file" id="albaran-file" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
-            <div id="albaran-img-preview" class="albaran-preview"></div>
+            </details>
           </div>
         </div>
       </div>
@@ -2877,6 +2913,7 @@ function renderAlbaranes() {
           <div class="card-body">
             <div id="albaran-ocr-msg" style="display:none;font-size:12px;padding:8px 12px;border-radius:var(--radius-sm);margin-bottom:10px;background:var(--teal-bg);color:var(--teal);border:1px solid var(--teal-border);"></div>
             <div id="albaran-lineas">${renderLineasAlbaran()}</div>
+            <!-- Botones confirm: visibles en desktop dentro del card -->
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
               <button class="btn" onclick="limpiarAlbaran()">Limpiar</button>
               <button class="btn primary" onclick="confirmarAlbaran()">✓ Confirmar y añadir al stock</button>
@@ -2885,6 +2922,21 @@ function renderAlbaranes() {
         </div>
       </div>
     </div>
+
+    <!-- MOBILE: sticky confirm bar (aparece siempre, prominente) -->
+    <div class="sticky-confirm-bar">
+      <button class="btn" style="flex-shrink:0" onclick="limpiarAlbaran()">Limpiar</button>
+      <button class="btn primary" style="flex:1;justify-content:center;font-size:15px;padding:12px" onclick="confirmarAlbaran()">✓ Confirmar y añadir al stock</button>
+    </div>
+
+    <!-- Envío por lotes: colapsado por defecto en mobile, visible en desktop -->
+    <details style="margin-bottom:20px">
+      <summary style="cursor:pointer;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;list-style:none">
+        <span style="font-size:18px">📦</span> Subir varias fotos a la vez
+        <span style="margin-left:auto;font-size:12px;color:var(--text3);font-weight:400">toca para expandir</span>
+      </summary>
+      <div style="margin-top:8px">${renderBatchSection()}</div>
+    </details>
 
     ${state.albaranes.length>0 ? (()=>{
       const provs=[...new Set(state.albaranes.map(a=>a.proveedor).filter(Boolean))];
@@ -3358,9 +3410,15 @@ function processImageFile(file) {
 
 async function procesarAlbaranOCR(base64, mediaType) {
   const drop = document.getElementById('albaran-drop');
+  const scanBtns = document.querySelectorAll('.scan-buttons-mobile button');
+  const isMobile = window.innerWidth <= 768;
+
   if (drop) {
     drop.style.pointerEvents = 'none';
     drop.innerHTML = `<div class="spinner" style="margin:0 auto 10px"></div><div class="drop-text">Leyendo albarán con IA…</div><div class="drop-sub">Puede tardar unos segundos</div>`;
+  }
+  if (isMobile) {
+    scanBtns.forEach(b => { b.disabled = true; b.textContent = '⏳ Procesando…'; });
   }
   const msg = document.getElementById('albaran-ocr-msg');
   if (msg) msg.style.display = 'none';
@@ -3392,10 +3450,14 @@ async function procesarAlbaranOCR(base64, mediaType) {
           msg.style.background = 'var(--amber-bg)'; msg.style.color = 'var(--amber)'; msg.style.borderColor = 'var(--amber-border)';
           msg.innerHTML = `⚠️ <strong>Posible duplicado:</strong> ${dup.coincidencias} de ${dup.total} productos ya aparecen en el albarán del <strong>${dup.albaran.fecha}</strong>${dup.albaran.proveedor?' ('+dup.albaran.proveedor+')':''}. Revisa antes de confirmar.`;
         } else {
-          msg.style.background = ''; msg.style.color = ''; msg.style.borderColor = '';
-          msg.textContent = `✓ ${data.lineas.length} producto${data.lineas.length>1?'s':''} detectado${data.lineas.length>1?'s':''}. Revisa las cantidades y precios antes de confirmar.`;
+          msg.style.background = 'var(--teal-bg)'; msg.style.color = 'var(--teal)'; msg.style.borderColor = 'var(--teal-border)';
+          msg.textContent = `✓ ${data.lineas.length} producto${data.lineas.length>1?'s':''} detectado${data.lineas.length>1?'s':''}. Revisa y pulsa Confirmar.`;
         }
         msg.style.display = 'block';
+      }
+      // Scroll to lines on mobile so user sees the result
+      if (isMobile) {
+        setTimeout(() => document.getElementById('albaran-lineas')?.scrollIntoView({behavior:'smooth', block:'start'}), 200);
       }
     } else {
       alert('No se detectaron productos. Añade las líneas manualmente.');
@@ -3405,7 +3467,13 @@ async function procesarAlbaranOCR(base64, mediaType) {
   } finally {
     if (drop) {
       drop.style.pointerEvents = '';
-      drop.innerHTML = `<div class="drop-icon">📄</div><div class="drop-text">Pulsa o arrastra aquí</div><div class="drop-sub">Foto del albarán (JPG, PNG)</div>`;
+      drop.innerHTML = `<div class="drop-icon">📄</div><div class="drop-text">Arrastra o pulsa para subir</div><div class="drop-sub">Foto del albarán (JPG, PNG)</div>`;
+    }
+    if (isMobile) {
+      scanBtns.forEach((b, i) => {
+        b.disabled = false;
+        b.textContent = i === 0 ? '📷 Tomar foto' : '🖼 Galería';
+      });
     }
   }
 }
