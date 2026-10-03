@@ -1,4 +1,48 @@
-# Reel — "1.000 € para prop firms" · Preproducción (pendiente de aprobación)
+# Reel — "1.000 € para prop firms"
+
+## ▶ Versión producida (v1)
+
+Archivo: `out/reel_prop_firms_1000.mp4` · 1080×1920 · 30 fps · H.264 + AAC · **42.8 s** · 21 planos · VO a −14 LUFS.
+
+Cambios respecto a la propuesta de abajo (según las respuestas del usuario):
+
+- **Voz sintética** (Piper `es_ES-davefx-medium`, offline). Anglicismos re-escritos solo para la voz
+  (`dráudaun`, `payaut`, `prop férms`); los subtítulos mantienen la grafía real. Verificado con Whisper.
+- **Sin comunidad ni promo**: CTA = "Sígueme para más." (P19–P20 de la tabla se funden en un plano).
+- **Sin referencia.** En el plano del payout (p5c) se usa la captura real del usuario, con el nombre y
+  el avatar de la prop firm pixelados y sin importes, rotulada "CAPTURA REAL".
+- Los tiempos de cada plano salen del audio real (`build/timing.json`):
+
+| Plano | Tiempo (s) | Frames | VO |
+|---|---|---|---|
+| hook | 0.00–1.99 | 0–60 | Tienes 1.000 € para prop firms. |
+| burn | 1.99–3.54 | 60–106 | Así no los quemas. |
+| p1a | 3.54–5.37 | 106–161 | Uno. Reparte el presupuesto. |
+| p1b | 5.37–6.92 | 161–208 | Compra con descuento |
+| p1c | 6.92–8.91 | 208–267 | y no lo gastes todo en el mismo mes. |
+| p2a | 8.91–10.83 | 267–325 | Dos. Primero, las reglas. |
+| p2b | 10.83–13.32 | 325–400 | drawdown, límite diario y consistencia. |
+| p2c | 13.32–15.49 | 400–465 | Si no las conoces, la cuenta dura un día. |
+| p3a | 15.49–17.63 | 465–529 | Tres. Arriesga para sobrevivir, |
+| p3b | 17.63–19.20 | 529–576 | no para pasar en 2 días. |
+| p3c | 19.20–20.75 | 576–623 | La prisa sale cara. |
+| p3d | 20.75–22.85 | 623–686 | Tamaño pequeño, stop siempre puesto. |
+| p4a | 22.85–24.40 | 686–732 | Cuatro. ¿Suspendes? |
+| p4b | 24.40–26.93 | 732–808 | Antes del segundo intento, revisa tus errores. |
+| p4c | 26.93–29.01 | 808–870 | Y no subas el riesgo para recuperar. |
+| p5a | 29.01–30.78 | 870–923 | Cinco. Pasar no es cobrar. |
+| p5b | 30.78–32.33 | 923–970 | Protege la cuenta fondeada. |
+| p5c | 32.33–35.11 | 970–1053 | Mismo plan, mismo riesgo, hasta el primer payout. |
+| follow | 35.11–36.66 | 1053–1100 | Sígueme para más. |
+| loop | 36.66–39.25 | 1100–1177 | Porque con 1.000 €, la clave es no quemarlos. |
+| disclaimer | 39.25–42.85 | 1177–1285 | (sin VO · disclaimer) |
+
+Reconstruir: `python3 build/voice.py <modelo-piper>` → masterizar a `out/vo.wav` → `node build/render.js video`
+(`node build/render.js stills` saca un fotograma por plano con las zonas seguras marcadas).
+
+---
+
+## Propuesta original
 
 Instagram Reel · 9:16 · 1080×1920 · 30 fps · **43,2 s (1.296 frames)** · 22 planos · sin assets externos.
 
