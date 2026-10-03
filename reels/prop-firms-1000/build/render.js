@@ -2,12 +2,17 @@
 // Uso:
 //   node build/render.js stills 0,40,100   → out/stills/fNNNN.png (con zonas seguras)
 //   node build/render.js video             → out/reel_prop_firms_1000.mp4
+// Otra composición: COMP=build/intro/comp.html TIMING=build/intro/timeline.json \
+//   AUDIO=out/intro_sfx.wav OUT=out/intro_ia.mp4 node build/render.js video
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path'), http = require('http');
 
 const ROOT = path.resolve(__dirname, '..');
-const timing = JSON.parse(fs.readFileSync(path.join(__dirname, 'timing.json'), 'utf8'));
+const COMP = process.env.COMP || 'build/comp.html';
+const timing = JSON.parse(fs.readFileSync(path.join(ROOT, process.env.TIMING || 'build/timing.json'), 'utf8'));
+const AUDIO = path.join(ROOT, process.env.AUDIO || 'out/vo.wav');
+const OUT = path.join(ROOT, process.env.OUT || 'out/reel_prop_firms_1000.mp4');
 const [mode = 'video', list = ''] = process.argv.slice(2);
 
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.png':'image/png', '.woff2':'font/woff2', '.json':'application/json' };
@@ -23,7 +28,7 @@ const server = http.createServer((req, res) => {
   const port = server.address().port;
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1080, height: 1920 } });
-  await page.goto(`http://127.0.0.1:${port}/build/comp.html`);
+  await page.goto(`http://127.0.0.1:${port}/${COMP}`);
   await page.evaluate(t => window.load(t), timing);
   const total = Math.round(timing.duration * timing.fps);
   const canvas = await page.$('canvas');
@@ -38,10 +43,10 @@ const server = http.createServer((req, res) => {
     }
     console.log(`stills: ${frames.length}`);
   } else {
-    const out = path.join(ROOT, 'out', 'reel_prop_firms_1000.mp4');
+    const out = OUT;
     const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error',
       '-f', 'image2pipe', '-framerate', String(timing.fps), '-c:v', 'png', '-i', '-',
-      '-i', path.join(ROOT, 'out', 'vo.wav'),
+      '-i', AUDIO,
       '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-profile:v', 'high',
       '-r', String(timing.fps), '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-shortest', '-movflags', '+faststart', out],
       { stdio: ['pipe', 'inherit', 'inherit'] });

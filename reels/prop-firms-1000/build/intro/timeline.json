@@ -1,0 +1,27 @@
+{
+  "fps": 30,
+  "duration": 14.0,
+  "question": { "text": "¿Cómo puedo ser rentable en prop firms con 1.000 €?", "start": -0.15, "cps": 23 },
+  "send": 2.35,
+  "thinking": [2.75, 3.35],
+  "answer": [
+    { "type": "text", "start": 3.35, "wps": 7, "text": "Lo óptimo es dividir esos 1.000 € en 10 cuentas y repartirlas en 2 stacks de 5." },
+    { "type": "stacks", "start": 5.75, "dur": 1.5 },
+    { "type": "text", "start": 7.35, "wps": 7, "text": "En cada stack, tradea cada cuenta de forma individual." },
+    { "type": "text", "start": 8.85, "wps": 6.5, "text": "Con un poco de suerte, deberías sacar mínimo un ROI de 2x siempre.", "highlight": ["ROI", "de", "2x", "siempre."] }
+  ],
+  "thinking2": [11.2, 11.75],
+  "final": { "text": "Te lo explico a detalle ahora", "start": 11.75 },
+  "wipe": [13.35, 14.0],
+  "disclaimer": "Contenido educativo · No es asesoramiento financiero",
+  "shots": [
+    { "id": "typing", "start": 0.0, "end": 2.35 },
+    { "id": "sent", "start": 2.35, "end": 3.35 },
+    { "id": "answer", "start": 3.35, "end": 5.75 },
+    { "id": "stacks", "start": 5.75, "end": 7.35 },
+    { "id": "individual", "start": 7.35, "end": 8.85 },
+    { "id": "roi", "start": 8.85, "end": 11.2 },
+    { "id": "final", "start": 11.2, "end": 13.35 },
+    { "id": "wipe", "start": 13.35, "end": 14.0 }
+  ]
+}

@@ -1,0 +1,290 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Intro IA</title>
+<style>
+@font-face{font-family:Archivo;font-weight:100 900;src:url(../../styleframes/fonts/Archivo-latin-var.woff2) format("woff2")}
+html,body{margin:0;background:#0B0F14}
+canvas{display:block}
+</style></head>
+<body><canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// Intro estilo chat: pregunta a una IA genérica → respuesta en streaming → transición.
+const C = { bg:'#0B0F14', ink:'#F4F4EF', lime:'#C6FF3D', red:'#FF4D4D' };
+const W = 1080, H = 1920, L = 80, R = 900, CX = 490, FONT = 'Archivo';
+const AREA = { top: 450, bottom: 1330 };            // zona de mensajes (dentro de la zona segura)
+const BAR = { y: 1362, h: 108 };                     // barra de escritura (acaba en y=1470 < 1500)
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+
+const clamp = (v,a=0,b=1) => Math.min(b, Math.max(a, v));
+const lerp = (a,b,t) => a + (b-a)*t;
+const easeOut = t => 1 - Math.pow(1-clamp(t),3);
+const easeIO = t => { t = clamp(t); return t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; };
+const back = t => { t = clamp(t); const c=1.9; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); };
+const prog = (t, s, len=.25) => clamp((t-s)/len);
+const hexA = (hex,a) => { const n=parseInt(hex.slice(1),16); return `rgba(${n>>16},${n>>8&255},${n&255},${a})`; };
+const font = (size, weight) => `${weight} ${size}px ${FONT}`;
+function text(str, x, y, {size=50, weight=600, color=C.ink, align='left', alpha=1, base='alphabetic'}={}){
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.font = font(size, weight);
+  ctx.textAlign = align; ctx.textBaseline = base; ctx.fillText(str, x, y); ctx.restore();
+}
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect(x,y,w,h,r); }
+
+// envuelve palabras en líneas con posiciones x fijas
+function wrap(words, maxW, size, weightOf){
+  const lines = [[]]; let x = 0;
+  ctx.save();
+  words.forEach((w, i) => {
+    ctx.font = font(size, weightOf(i)); const ww = ctx.measureText(w).width, sp = ctx.measureText(' ').width;
+    if (x > 0 && x + sp + ww > maxW) { lines.push([]); x = 0; }
+    if (x > 0) x += sp;
+    lines[lines.length-1].push({ w, i, x, ww }); x += ww;
+  });
+  ctx.restore(); return lines;
+}
+
+// logo genérico de la IA (destello de 4 puntas, sin marca)
+function spark(cx, cy, r, color=C.lime, rot=0){
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot); ctx.fillStyle = color; ctx.beginPath();
+  for (let k=0;k<4;k++){ const a = k*Math.PI/2; ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+    ctx.lineTo(Math.cos(a+Math.PI/4)*r*.28, Math.sin(a+Math.PI/4)*r*.28); }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function avatar(cx, cy, r, t){
+  ctx.save(); ctx.fillStyle = hexA(C.lime,.12); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+  ctx.strokeStyle = hexA(C.lime,.5); ctx.lineWidth = 3; ctx.stroke(); ctx.restore();
+  spark(cx, cy, r*.62, C.lime, t*.6);
+}
+function dots(x, y, t){
+  for (let k=0;k<3;k++){ const a = .35 + .65*Math.max(0, Math.sin(t*9 - k*.9));
+    ctx.fillStyle = hexA(C.ink, a); ctx.beginPath(); ctx.arc(x + k*34, y - 6*Math.max(0, Math.sin(t*9 - k*.9)), 11, 0, 7); ctx.fill(); }
+}
+
+// ── layout de la conversación (se calcula una vez) ──────────────────────────
+let TL, Q, BLOCKS = [], QB;
+const ANS = { size:50, weight:600, lh:68, gap:30 };
+function build(){
+  // tarjeta de la pregunta (estado vacío) y burbuja (tras enviar)
+  const qWords = TL.question.text.split(' ');
+  Q = { words: qWords, lines: wrap(qWords, 640, 64, () => 700) };
+  let acc = 0; Q.chars = qWords.map(w => { const s = acc; acc += w.length + 1; return s; });
+  Q.total = TL.question.text.length; Q.end = TL.question.start + Q.total / TL.question.cps;
+  const bLines = wrap(qWords, 600, 48, () => 700);
+  const bw = Math.max(...bLines.map(l => l[l.length-1].x + l[l.length-1].ww)) + 64;
+  QB = { lines: bLines, w: bw, h: bLines.length*62 + 50 };
+
+  let y = QB.h + 44;
+  BLOCKS.push({ type:'aihead', y, h:76, start: TL.send + .25 }); y += 76 + 14;
+  TL.answer.forEach(a => {
+    if (a.type === 'text'){
+      const words = a.text.split(' '), hl = new Set(a.highlight || []);
+      const hlIdx = new Set(words.map((w,i)=>i).filter(i => a.highlight && words.slice(i).length >= 0 && isHL(words, i, a.highlight)));
+      const lines = wrap(words, R - L, ANS.size, i => hlIdx.has(i) ? 900 : ANS.weight);
+      const times = words.map((w,i) => a.start + i / a.wps);
+      BLOCKS.push({ type:'text', y, h: lines.length*ANS.lh, lines, times, hlIdx, start: a.start, end: times[times.length-1] });
+      y += lines.length*ANS.lh + ANS.gap;
+    } else {
+      BLOCKS.push({ type:'stacks', y, h: 470, start: a.start, dur: a.dur, end: a.start + a.dur }); y += 470 + ANS.gap + 10;
+    }
+  });
+  y += 20;
+  const fw = TL.final.text.split(' ');
+  const flines = wrap(fw, R - L - 20, 66, () => 900);
+  BLOCKS.push({ type:'final', y, h: flines.length*80 + 40, lines: flines, start: TL.final.start, dotsAt: TL.thinking2[0] });
+}
+// resalta la secuencia exacta de palabras indicada
+function isHL(words, i, seq){
+  for (let s = Math.max(0, i - seq.length + 1); s <= i; s++)
+    if (seq.every((w,k) => words[s+k] === w)) return true;
+  return false;
+}
+
+// altura de contenido visible en t (para el auto-scroll)
+function contentBottom(t){
+  if (t < TL.send) return 0;
+  let b = QB.h;
+  for (const bl of BLOCKS){
+    if (bl.type === 'aihead' && t >= bl.start) b = bl.y + bl.h + 40;              // espacio para los puntos
+    if (bl.type === 'text' && t >= bl.start){
+      const n = bl.times.filter(x => x <= t).length - 1; if (n < 0) continue;
+      const line = bl.lines.findIndex(l => l.some(o => o.i === n)); b = bl.y + (line+1)*ANS.lh;
+    }
+    if (bl.type === 'stacks' && t >= bl.start) b = bl.y + bl.h * clamp((t-bl.start)/(bl.dur*.8));
+    if (bl.type === 'final' && t >= bl.dotsAt) b = bl.y + (t >= bl.start ? bl.h : 70);
+  }
+  return b;
+}
+const VIEW = AREA.bottom - AREA.top - 40;
+function scrollAt(t){                                   // media móvil → scroll suave y determinista
+  let s = 0; const N = 12;
+  for (let k=0;k<N;k++){ const tt = t - k*.03; s += Math.max(0, contentBottom(tt) - VIEW); }
+  return s / N;
+}
+
+// ── dibujo ──────────────────────────────────────────────────────────────────
+function background(){
+  ctx.fillStyle = C.bg; ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.strokeStyle = hexA(C.ink,.035); ctx.lineWidth = 2;
+  for (let x=80; x<W; x+=120){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=10; y<H; y+=120){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.restore();
+}
+function header(t){
+  avatar(L + 38, 312, 38, t);
+  text('Asistente IA', L + 96, 304, {size:42, weight:800});
+  ctx.fillStyle = C.lime; ctx.beginPath(); ctx.arc(L + 106, 338, 8, 0, 7); ctx.fill();
+  text('en línea', L + 122, 349, {size:30, weight:600, alpha:.7});
+  ctx.fillStyle = hexA(C.ink,.12); ctx.fillRect(L, 384, R - L, 3);
+  text(TL.disclaimer, CX, 428, {size:28, weight:600, align:'center', alpha:.62});
+}
+function inputBar(t, a){
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  rr(L, BAR.y, R - L, BAR.h, 54); ctx.fillStyle = hexA(C.ink,.07); ctx.fill(); ctx.strokeStyle = hexA(C.ink,.2); ctx.lineWidth = 3; ctx.stroke();
+  text('Escribe un mensaje…', L + 44, BAR.y + 68, {size:38, weight:600, alpha:.4});
+  ctx.fillStyle = hexA(C.lime,.35); ctx.beginPath(); ctx.arc(R - 56, BAR.y + BAR.h/2, 36, 0, 7); ctx.fill();
+  arrowUp(R - 56, BAR.y + BAR.h/2, C.bg);
+  ctx.restore();
+}
+function arrowUp(cx, cy, color){
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 7; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(cx, cy + 16); ctx.lineTo(cx, cy - 16); ctx.moveTo(cx - 14, cy - 3); ctx.lineTo(cx, cy - 17); ctx.lineTo(cx + 14, cy - 3); ctx.stroke(); ctx.restore();
+}
+
+// estado vacío + tarjeta grande donde se escribe la pregunta (gancho del frame 0)
+function composer(t){
+  const m = easeIO(prog(t, TL.send, .38));                    // 0 = centrado, 1 = barra inferior
+  if (m >= 1) return;
+  const lines = Q.lines.length, cardH = Math.max(1, lines)*80 + 120;
+  const y0 = 860 - cardH/2;
+  const y = lerp(y0, BAR.y, m), h = lerp(cardH, BAR.h, m);
+  // cabecera del estado vacío
+  const ea = 1 - easeOut(prog(t, TL.send, .2));
+  ctx.save(); ctx.globalAlpha = ea; spark(CX, y0 - 190, 56, C.lime, t*.6); ctx.restore();
+  text('¿En qué te ayudo?', CX, y0 - 70, {size:56, weight:800, align:'center', alpha:.55*ea});
+  ctx.save(); ctx.globalAlpha = 1 - m;
+  rr(L, y, R - L, h, 44); ctx.fillStyle = hexA(C.ink,.07); ctx.fill();
+  ctx.strokeStyle = C.lime; ctx.lineWidth = 4; ctx.stroke();
+  // texto escribiéndose
+  const shown = Math.floor((t - TL.question.start) * TL.question.cps);
+  let caret = null;
+  Q.lines.forEach((ln, li) => ln.forEach(o => {
+    const s = Q.chars[o.i], n = clamp(shown - s, 0, o.w.length);
+    if (n <= 0) return;
+    const part = o.w.slice(0, n);
+    text(part, L + 50 + o.x, y + 100 + li*80, {size:64, weight:700});
+    if (shown >= s) { ctx.font = font(64,700); caret = { x: L + 50 + o.x + ctx.measureText(part).width + 6, y: y + 100 + li*80 }; }
+  }));
+  if (!caret) caret = { x: L + 50, y: y + 100 };
+  if (Math.floor(t*2.2) % 2 === 0 || t < Q.end) { ctx.fillStyle = C.lime; ctx.fillRect(caret.x, caret.y - 54, 6, 66); }
+  // botón enviar (se ilumina al terminar de escribir y "se pulsa")
+  const ready = t >= Q.end, press = prog(t, TL.send - .12, .12);
+  const bx = R - 70, by = y + h - 66, br = 42 * (1 - .15*Math.sin(press*Math.PI));
+  ctx.fillStyle = ready ? C.lime : hexA(C.ink,.2); ctx.beginPath(); ctx.arc(bx, by, br, 0, 7); ctx.fill();
+  arrowUp(bx, by, C.bg);
+  ctx.restore();
+}
+
+function bubble(t, oy){
+  const p = easeOut(prog(t, TL.send + .05, .35)); if (p <= 0) return;
+  const x = R - QB.w, y = oy + (1-p)*220;
+  ctx.save(); ctx.globalAlpha = p;
+  ctx.beginPath(); ctx.roundRect(x, y, QB.w, QB.h, [40,40,10,40]); ctx.fillStyle = C.lime; ctx.fill();
+  QB.lines.forEach((ln, li) => ln.forEach(o => text(o.w, x + 32 + o.x, y + 70 + li*62, {size:48, weight:700, color:C.bg})));
+  ctx.restore();
+}
+
+function stacks(bl, t, oy){
+  const y = oy + bl.y, a = easeOut(prog(t, bl.start, .25));
+  ctx.save(); ctx.globalAlpha = a;
+  rr(L, y, R - L, bl.h, 28); ctx.fillStyle = hexA(C.ink,.04); ctx.fill(); ctx.strokeStyle = hexA(C.ink,.22); ctx.lineWidth = 3; ctx.stroke();
+  ctx.restore();
+  const cols = [L + 205, L + 615], per = (bl.dur * .75) / 10;
+  cols.forEach((cx, c) => {
+    text(`STACK ${c+1}`, cx, y + 70, {size:38, weight:800, color:C.lime, align:'center', alpha:a});
+    for (let k=0;k<5;k++){
+      const idx = c*5 + k, st = bl.start + .15 + idx*per, p = back(prog(t, st, .22));
+      if (p <= 0) continue;
+      const cy = y + 100 + k*58, w = 330;
+      ctx.save(); ctx.globalAlpha = clamp(p); ctx.translate(cx, cy + 25); ctx.scale(lerp(.6,1,clamp(p)), lerp(.6,1,clamp(p)));
+      rr(-w/2, -25, w, 50, 12); ctx.fillStyle = C.ink; ctx.fill();
+      text(`Cuenta ${idx+1}`, -w/2 + 22, 12, {size:30, weight:700, color:C.bg});
+      text('100 €', w/2 - 22, 12, {size:30, weight:900, color:C.bg, align:'right'});
+      ctx.restore();
+    }
+  });
+  const tot = easeOut(prog(t, bl.start + bl.dur*.8, .3));
+  text('10 cuentas × 100 € = 1.000 €', CX, y + bl.h - 38, {size:40, weight:800, align:'center', alpha:tot});
+}
+
+function textBlock(bl, t, oy){
+  bl.lines.forEach((ln, li) => ln.forEach(o => {
+    const st = bl.times[o.i]; if (t < st) return;
+    const p = easeOut(prog(t, st, .18)), hl = bl.hlIdx.has(o.i);
+    const y = oy + bl.y + (li+1)*ANS.lh - 18;
+    if (hl){
+      const s = lerp(1.35, 1, back(prog(t, st, .3)));
+      ctx.save(); ctx.translate(L + o.x + o.ww/2, y - 18); ctx.scale(s, s);
+      text(o.w, -o.ww/2, 18, {size:ANS.size, weight:900, color:C.lime, alpha:p}); ctx.restore();
+    } else text(o.w, L + o.x, y, {size:ANS.size, weight:ANS.weight, alpha:p});
+  }));
+}
+
+function finalBlock(bl, t, oy){
+  const y = oy + bl.y;
+  if (t >= bl.dotsAt && t < bl.start) dots(L + 20, y + 40, t);
+  if (t < bl.start) return;
+  bl.lines.forEach((ln, li) => ln.forEach(o => {
+    const st = bl.start + o.i * .1, p = easeOut(prog(t, st, .2)); if (p <= 0) return;
+    text(o.w, L + o.x, y + 64 + li*80 + (1-p)*20, {size:66, weight:900, alpha:p});
+  }));
+  // flecha que apunta "hacia ti"
+  const last = bl.lines[bl.lines.length-1], lo = last[last.length-1];
+  const ax = L + lo.x + lo.ww + 52, ay = y + 40 + (bl.lines.length-1)*80, a = easeOut(prog(t, bl.start + .5, .2));
+  const bounce = Math.abs(Math.sin((t - bl.start)*6))*12;
+  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = C.lime; ctx.lineWidth = 10; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(ax, ay - 20 + bounce); ctx.lineTo(ax, ay + 26 + bounce); ctx.moveTo(ax - 18, ay + 8 + bounce); ctx.lineTo(ax, ay + 28 + bounce); ctx.lineTo(ax + 18, ay + 8 + bounce); ctx.stroke(); ctx.restore();
+}
+
+function wipe(t){
+  const p = easeIO(prog(t, TL.wipe[0], TL.wipe[1] - TL.wipe[0] - .03)); if (p <= 0) return;
+  const top = lerp(H + 300, -400, p);
+  ctx.save(); ctx.fillStyle = C.lime; ctx.beginPath();
+  ctx.moveTo(0, top + 260); ctx.lineTo(W, top); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600)); build(); return true; };
+window.renderFrame = (f) => {
+  const t = f / TL.fps;
+  background();
+  // ligero zoom durante la transición
+  const z = 1 + .06*easeIO(prog(t, TL.wipe[0], TL.wipe[1]-TL.wipe[0]));
+  ctx.save(); ctx.translate(CX, 900); ctx.scale(z, z); ctx.translate(-CX, -900);
+  header(t);
+  // conversación con scroll
+  const oy = AREA.top - scrollAt(t);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, AREA.top - 10, W, AREA.bottom - AREA.top + 10); ctx.clip();
+  if (t >= TL.send) bubble(t, oy);
+  for (const bl of BLOCKS){
+    if (bl.type === 'aihead' && t >= bl.start){
+      const a = easeOut(prog(t, bl.start, .25)); ctx.save(); ctx.globalAlpha = a;
+      avatar(L + 30, oy + bl.y + 34, 30, t); text('Asistente IA', L + 76, oy + bl.y + 46, {size:34, weight:800, alpha:.85}); ctx.restore();
+      if (t >= TL.thinking[0] && t < TL.thinking[1]) dots(L + 20, oy + bl.y + bl.h + 34, t);
+    }
+    if (bl.type === 'text' && t >= bl.start) textBlock(bl, t, oy);
+    if (bl.type === 'stacks' && t >= bl.start) stacks(bl, t, oy);
+    if (bl.type === 'final') finalBlock(bl, t, oy);
+  }
+  ctx.restore();
+  // degradado de desvanecido arriba/abajo del área de mensajes
+  for (const [y0, y1] of [[AREA.top - 10, AREA.top + 40], [AREA.bottom, AREA.bottom - 50]]){
+    const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, C.bg); g.addColorStop(1, hexA(C.bg, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, Math.min(y0,y1), W, Math.abs(y1-y0));
+  }
+  inputBar(t, easeOut(prog(t, TL.send + .25, .2)));
+  composer(t);
+  ctx.restore();
+  wipe(t);
+  if (window.SAFE_OVERLAY){ ctx.save(); ctx.fillStyle = 'rgba(255,0,0,.25)';
+    ctx.fillRect(0,0,W,250); ctx.fillRect(0,1500,W,420); ctx.fillRect(0,250,80,1250); ctx.fillRect(900,250,180,1250); ctx.restore(); }
+  let id = 'x'; for (const s of TL.shots) if (t >= s.start) id = s.id; return id;
+};
+</script></body></html>

@@ -1,5 +1,28 @@
 # Reel — "1.000 € para prop firms"
 
+## ▶ Intro estilo chat con IA (v2, actual)
+
+Archivo: `out/intro_ia.mp4` · 1080×1920 · 30 fps · 14,0 s · sin voz, con efectos de sonido generados por código.
+Pensado como intro: termina en una cortina lima a pantalla completa (13,35–14,0 s) para cortar a tu vídeo.
+
+| Tiempo (s) | Qué pasa |
+|---|---|
+| 0,0–2,35 | Se escribe la pregunta: "¿Cómo puedo ser rentable en prop firms con 1.000 €?" (visible desde el frame 0) |
+| 2,35–3,35 | Se envía, sube como burbuja, la IA "piensa" |
+| 3,35–5,75 | "Lo óptimo es dividir esos 1.000 € en 10 cuentas y repartirlas en 2 stacks de 5." |
+| 5,75–7,35 | Esquema: STACK 1 / STACK 2 con 5 cuentas de 100 € cada uno |
+| 7,35–8,85 | "En cada stack, tradea cada cuenta de forma individual." |
+| 8,85–11,2 | "Con un poco de suerte, deberías sacar mínimo un ROI de 2x siempre." ("ROI de 2x siempre" en lima) |
+| 11,2–13,35 | "Te lo explico a detalle ahora ↓" |
+| 13,35–14,0 | Cortina lima → corte a tu vídeo |
+
+Disclaimer fijo bajo la cabecera del chat: "Contenido educativo · No es asesoramiento financiero".
+Textos y tiempos en `build/intro/timeline.json`. Reconstruir: `python3 build/intro/sfx.py` y
+`COMP=build/intro/comp.html TIMING=build/intro/timeline.json AUDIO=out/intro_sfx.wav OUT=out/intro_ia.mp4 node build/render.js video`.
+
+---
+
+
 ## ▶ Versión producida (v1)
 
 Archivo: `out/reel_prop_firms_1000.mp4` · 1080×1920 · 30 fps · H.264 + AAC · **42.8 s** · 21 planos · VO a −14 LUFS.
