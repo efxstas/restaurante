@@ -16,7 +16,7 @@ Pensado como intro: termina en una cortina azul a pantalla completa (13,35–14,
 | 11,2–13,35 | "Te lo explico a detalle ahora ↓" |
 | 13,35–14,0 | Cortina azul → corte a tu vídeo |
 
-Tema claro: fondo gris `#ECEDF0`, tarjetas blancas, texto `#14161B`, acento azul `#2B5BFF`. Sin disclaimer en pantalla (decisión del usuario).
+Tema claro: fondo gris `#ECEDF0`, tarjetas blancas, texto `#14161B`, acento azul `#2B5BFF`. Sin disclaimer en pantalla (decisión del usuario). Fondo: gráfico real del NQ del usuario (`assets/chart_nq.png`, sin marcas de TradingView) al 20 % con paneo lento.
 Textos y tiempos en `build/intro/timeline.json`. Reconstruir: `python3 build/intro/sfx.py` y
 `COMP=build/intro/comp.html TIMING=build/intro/timeline.json AUDIO=out/intro_sfx.wav OUT=out/intro_ia.mp4 node build/render.js video`.
 

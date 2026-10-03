@@ -121,8 +121,17 @@ function scrollAt(t){                                   // media móvil → scro
 }
 
 // ── dibujo ──────────────────────────────────────────────────────────────────
-function background(){
+const chartImg = new Image(); chartImg.src = '../../assets/chart_nq.png';
+// gráfico real del NQ de fondo: paneo lento hacia la proyección bajista del final
+function chartBg(t){
+  if (!chartImg.complete || !chartImg.naturalWidth) return;
+  const h = 1560, w = chartImg.naturalWidth * h / chartImg.naturalHeight;
+  const p = easeIO(clamp(t / TL.duration)), x = lerp(-w*.38, W - w + 40, p), y = 200 - p*60;
+  ctx.save(); ctx.globalAlpha = .2; ctx.drawImage(chartImg, x, y, w, h); ctx.restore();
+}
+function background(t=0){
   ctx.fillStyle = C.bg; ctx.fillRect(0,0,W,H);
+  chartBg(t);
   ctx.save(); ctx.strokeStyle = hexA(C.ink,.035); ctx.lineWidth = 2;
   for (let x=80; x<W; x+=120){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
   for (let y=10; y<H; y+=120){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
@@ -251,10 +260,10 @@ function wipe(t){
   ctx.moveTo(0, top + 260); ctx.lineTo(W, top); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill(); ctx.restore();
 }
 
-window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600)); build(); return true; };
+window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600)); await new Promise(r => chartImg.complete ? r() : (chartImg.onload = r)); build(); return true; };
 window.renderFrame = (f) => {
   const t = f / TL.fps;
-  background();
+  background(t);
   // ligero zoom durante la transición
   const z = 1 + .06*easeIO(prog(t, TL.wipe[0], TL.wipe[1]-TL.wipe[0]));
   ctx.save(); ctx.translate(CX, 900); ctx.scale(z, z); ctx.translate(-CX, -900);
