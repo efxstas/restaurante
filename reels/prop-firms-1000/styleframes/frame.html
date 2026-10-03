@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:Archivo;font-weight:100 900;src:url(fonts/Archivo-latin-var.woff2) format("woff2")}
+:root{--bg:#0B0F14;--ink:#F4F4EF;--lime:#C6FF3D;--red:#FF4D4D}
+*{margin:0;box-sizing:border-box}
+body{width:1080px;height:1920px;background:var(--bg);font-family:Archivo,sans-serif;position:relative;overflow:hidden;color:var(--ink)}
+svg.bgc{position:absolute;inset:0;opacity:.09}
+.a{position:absolute;left:80px;width:820px;text-align:center}
+.t{top:300px;font-weight:800;font-size:80px;line-height:1.02;text-transform:uppercase;letter-spacing:-.01em}
+.hero{top:660px;font-weight:900;font-size:190px;white-space:nowrap;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.sub{top:1250px;font-weight:800;font-size:76px;line-height:1.1}
+.sub b{color:var(--lime);font-weight:800}
+.disc{top:1150px;font-weight:600;font-size:50px;line-height:1.25}
+.ov{position:absolute;background:rgba(255,77,77,.18);border:2px dashed var(--red)}
+.lbl{position:absolute;font:600 26px Archivo;color:var(--red)}
+.ov.on{display:block}
+</style></head><body>
+<svg class="bgc" width="1080" height="1920" id="c"></svg>
+<div id="content"></div>
+<div id="ovl"></div>
+<script>
+const q=new URLSearchParams(location.search), mode=q.get('m')||'hook', ov=q.get('ov')==='1';
+let s=7,r=()=>(s=(s*16807)%2147483647)/2147483647, y=900, h='';
+for(let i=0;i<34;i++){const o=y, c=o+(r()-.55)*140, hi=Math.min(o,c)-r()*50, lo=Math.max(o,c)+r()*50, x=20+i*31, col=c<o?'#C6FF3D':'#FF4D4D';
+h+=`<line x1="${x+10}" x2="${x+10}" y1="${hi}" y2="${lo}" stroke="${col}" stroke-width="3"/><rect x="${x}" y="${Math.min(o,c)}" width="20" height="${Math.max(6,Math.abs(c-o))}" fill="${col}"/>`; y=c;}
+document.getElementById('c').innerHTML=h;
+document.getElementById('content').innerHTML = mode==='hook'
+ ? `<div class="a t">Tienes 1.000 €<br>para prop firms</div><div class="a hero">1.000 €</div><div class="a sub">Tienes <b>1.000 €</b></div>`
+ : `<div class="a hero">1.000 €</div><div class="a disc">Contenido educativo.<br>No es asesoramiento financiero.<br>La mayoría de traders no supera las evaluaciones.</div>`;
+if(ov) document.getElementById('ovl').innerHTML=`
+<div class="ov" style="left:0;top:0;width:1080px;height:250px"></div><div class="lbl" style="left:20px;top:210px">250 px superiores</div>
+<div class="ov" style="left:0;top:1500px;width:1080px;height:420px"></div><div class="lbl" style="left:20px;top:1510px">420 px inferiores</div>
+<div class="ov" style="left:0;top:250px;width:80px;height:1250px"></div>
+<div class="ov" style="left:900px;top:250px;width:180px;height:1250px"></div><div class="lbl" style="left:910px;top:760px">180 px<br>botones</div>`;
+</script></body></html>
