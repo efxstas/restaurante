@@ -13,7 +13,6 @@
   "thinking2": [11.2, 11.75],
   "final": { "text": "Te lo explico a detalle ahora", "start": 11.75 },
   "wipe": [13.35, 14.0],
-  "disclaimer": "Contenido educativo · No es asesoramiento financiero",
   "shots": [
     { "id": "typing", "start": 0.0, "end": 2.35 },
     { "id": "sent", "start": 2.35, "end": 3.35 },

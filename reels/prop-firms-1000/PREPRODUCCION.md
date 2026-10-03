@@ -3,7 +3,7 @@
 ## ▶ Intro estilo chat con IA (v2, actual)
 
 Archivo: `out/intro_ia.mp4` · 1080×1920 · 30 fps · 14,0 s · sin voz, con efectos de sonido generados por código.
-Pensado como intro: termina en una cortina lima a pantalla completa (13,35–14,0 s) para cortar a tu vídeo.
+Pensado como intro: termina en una cortina azul a pantalla completa (13,35–14,0 s) para cortar a tu vídeo.
 
 | Tiempo (s) | Qué pasa |
 |---|---|
@@ -14,9 +14,9 @@ Pensado como intro: termina en una cortina lima a pantalla completa (13,35–14,
 | 7,35–8,85 | "En cada stack, tradea cada cuenta de forma individual." |
 | 8,85–11,2 | "Con un poco de suerte, deberías sacar mínimo un ROI de 2x siempre." ("ROI de 2x siempre" en lima) |
 | 11,2–13,35 | "Te lo explico a detalle ahora ↓" |
-| 13,35–14,0 | Cortina lima → corte a tu vídeo |
+| 13,35–14,0 | Cortina azul → corte a tu vídeo |
 
-Disclaimer fijo bajo la cabecera del chat: "Contenido educativo · No es asesoramiento financiero".
+Tema claro: fondo gris `#ECEDF0`, tarjetas blancas, texto `#14161B`, acento azul `#2B5BFF`. Sin disclaimer en pantalla (decisión del usuario).
 Textos y tiempos en `build/intro/timeline.json`. Reconstruir: `python3 build/intro/sfx.py` y
 `COMP=build/intro/comp.html TIMING=build/intro/timeline.json AUDIO=out/intro_sfx.wav OUT=out/intro_ia.mp4 node build/render.js video`.
 
