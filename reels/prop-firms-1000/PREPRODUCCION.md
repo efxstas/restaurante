@@ -1,6 +1,27 @@
 # Reel — "1.000 € para prop firms"
 
-## ▶ Intro estilo chat con IA (v2, actual)
+## ▶ v3 (actual): intro + clip gurú vs trader
+
+**`out/intro_ia.mp4` (19 s):** chat con la IA (respuesta típica de gurú, hasta 10,9 s) → sello rojo
+"ESTO ES LO QUE TE ENSEÑAN" (10,9) → "Lo que ves en Instagram": post de payout +1.500 € (12,4) → giro a
+"Lo que no te enseñan": emails reales de Account Suspension ×9 (14,4) → "Vende más una foto que la realidad." (15,0)
+→ "Te lo explico ahora ↓" (17,2) → cortina azul (18,35–19,0) para cortar a tu vídeo.
+
+**`out/guru_vs_trader.mp4` (23 s, para insertar mientras hablas):**
+
+| Tiempo (s) | Qué pasa |
+|---|---|
+| 0–9,5 | **Situación 1, el gurú:** compra 10 cuentas (−1.000 €), quema 9, pasa 1 → payout +1.500 € que enseña en redes → balance: neto +500 €, ROI +50 % |
+| 9,5–19 | **Situación 2, el trader:** mismas 10 cuentas → trade real R:R 1,5 → sus payouts reales (MFF 2.000 $ + Lucid 3.936 $) → balance: payouts 3.000–4.000 €, neto +2.000–3.000 €, ROI +200–300 % |
+| 19–23 | Comparativa de barras: gurú +50 % vs trader +200–300 %, "Mismo presupuesto. Distinto enfoque." |
+
+Assets reales del usuario en `assets/` (QR y código del certificado de Lucid pixelados). Cifras en
+`build/compare/timeline.json`. Render: `python3 build/compare/sfx.py` y
+`COMP=build/compare/comp.html TIMING=build/compare/timeline.json AUDIO=out/compare_sfx.wav OUT=out/guru_vs_trader.mp4 node build/render.js video`.
+
+---
+
+## Intro estilo chat con IA (v2)
 
 Archivo: `out/intro_ia.mp4` · 1080×1920 · 30 fps · 14,0 s · sin voz, con efectos de sonido generados por código.
 Pensado como intro: termina en una cortina azul a pantalla completa (13,35–14,0 s) para cortar a tu vídeo.

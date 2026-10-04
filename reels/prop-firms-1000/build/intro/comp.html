@@ -8,7 +8,7 @@ canvas{display:block}
 <body><canvas id="c" width="1080" height="1920"></canvas>
 <script>
 // Intro estilo chat: pregunta a una IA genérica → respuesta en streaming → transición.
-const C = { bg:'#ECEDF0', card:'#FFFFFF', ink:'#14161B', accent:'#2B5BFF', onAccent:'#FFFFFF' };
+const C = { bg:'#ECEDF0', card:'#FFFFFF', ink:'#14161B', accent:'#2B5BFF', onAccent:'#FFFFFF', red:'#E5484D', navy:'#0E1530' };
 const W = 1080, H = 1920, L = 80, R = 900, CX = 490, FONT = 'Archivo';
 const AREA = { top: 450, bottom: 1330 };            // zona de mensajes (dentro de la zona segura)
 const BAR = { y: 1362, h: 108 };                     // barra de escritura (acaba en y=1470 < 1500)
@@ -87,6 +87,7 @@ function build(){
     }
   });
   y += 20;
+  if (!TL.final) return;
   const fw = TL.final.text.split(' ');
   const flines = wrap(fw, R - L - 20, 66, () => 900);
   BLOCKS.push({ type:'final', y, h: flines.length*80 + 40, lines: flines, start: TL.final.start, dotsAt: TL.thinking2[0] });
@@ -122,6 +123,7 @@ function scrollAt(t){                                   // media móvil → scro
 
 // ── dibujo ──────────────────────────────────────────────────────────────────
 const chartImg = new Image(); chartImg.src = '../../assets/chart_nq.png';
+const suspImg = new Image(); suspImg.src = '../../assets/suspensions.png';
 // gráfico real del NQ de fondo: paneo lento hacia la proyección bajista del final
 function chartBg(t){
   if (!chartImg.complete || !chartImg.naturalWidth) return;
@@ -253,6 +255,67 @@ function finalBlock(bl, t, oy){
   ctx.beginPath(); ctx.moveTo(ax, ay - 20 + bounce); ctx.lineTo(ax, ay + 26 + bounce); ctx.moveTo(ax - 18, ay + 8 + bounce); ctx.lineTo(ax, ay + 28 + bounce); ctx.lineTo(ax + 18, ay + 8 + bounce); ctx.stroke(); ctx.restore();
 }
 
+// ── bloque "lo que te enseñan / lo que no" ─────────────────────────────────
+function centerText(str, y, size, weight, color, alpha=1, maxW=R-L){
+  const lines = wrap(str.split(' '), maxW, size, () => weight);
+  lines.forEach((ln, li) => { const last = ln[ln.length-1], w = last.x + last.ww;
+    ln.forEach(o => text(o.w, CX - w/2 + o.x, y + li*size*1.12, {size, weight, color, alpha})); });
+  return lines.length*size*1.12;
+}
+function guruPost(cx, cy, w, h){                      // la "foto" típica de gurú (dibujada, sin marca)
+  rr(cx-w/2, cy-h/2, w, h, 36); ctx.fillStyle = C.navy; ctx.fill();
+  ctx.save(); ctx.strokeStyle = hexA(C.accent,.9); ctx.lineWidth = 8; rr(cx-w/2+22, cy-h/2+22, w-44, h-44, 24); ctx.stroke(); ctx.restore();
+  text('PAYOUT', cx, cy - 150, {size:46, weight:800, color:'#9FB2FF', align:'center'});
+  text('APROBADO', cx, cy - 95, {size:46, weight:800, color:'#9FB2FF', align:'center'});
+  text('+1.500 €', cx, cy + 40, {size:128, weight:900, color:'#FFFFFF', align:'center'});
+  text('"Otro payout más 🔥 Esto funciona"', cx, cy + 150, {size:34, weight:600, color:'#FFFFFF', align:'center', alpha:.8});
+}
+function suspCard(cx, cy, w, h){                     // lo que hay detrás: cuentas suspendidas (captura real, ampliada)
+  rr(cx-w/2, cy-h/2, w, h, 36); ctx.fillStyle = C.card; ctx.fill();
+  const sx = 40, sy = 52, sw = 540, sh = 132;          // remitente + asunto de las 3 filas
+  const dw = w - 40, dh = dw * sh / sw;
+  ctx.save(); rr(cx-w/2+20, cy-h/2+20, dw, h-40, 18); ctx.clip();
+  for (let k=0;k<3;k++) ctx.drawImage(suspImg, sx, sy, sw, sh, cx-w/2+20, cy-h/2+20 + k*dh, dw, dh);
+  ctx.restore();
+  text('Account Suspension ×9', cx, cy + h/2 + 70, {size:46, weight:900, color:C.red, align:'center'});
+}
+function hate(t){
+  const H0 = TL.hate; if (!H0 || t < H0.stamp) return;
+  // velo sobre el chat
+  const v = easeOut(prog(t, H0.stamp, .3));
+  ctx.fillStyle = hexA(C.bg, v*lerp(.93, 1, prog(t, H0.photo - .2, .3))); ctx.fillRect(0, 0, W, H);
+  // sello rojo
+  const sp = back(prog(t, H0.stamp, .3)), so = 1 - easeOut(prog(t, H0.photo - .2, .25));
+  if (sp > 0 && so > 0){
+    ctx.save(); ctx.globalAlpha = so; ctx.translate(CX, 860); ctx.rotate(-.1); const sc = lerp(1.7, 1, clamp(sp)); ctx.scale(sc, sc);
+    ctx.strokeStyle = C.red; ctx.lineWidth = 12; rr(-380, -150, 760, 300, 26); ctx.fillStyle = hexA(C.card,.92); ctx.fill(); ctx.stroke();
+    text('ESTO ES LO QUE', 0, -30, {size:76, weight:900, color:C.red, align:'center'});
+    text('TE ENSEÑAN', 0, 70, {size:96, weight:900, color:C.red, align:'center'});
+    ctx.restore();
+  }
+  if (t < H0.photo) return;
+  // foto ↔ realidad (giro)
+  const a = easeOut(prog(t, H0.photo, .3)), flip = prog(t, H0.flip, .5), sx = Math.abs(Math.cos(flip*Math.PI)), front = flip < .5;
+  const fade = 1 - easeOut(prog(t, H0.final - .1, .3));
+  const label = front ? 'Lo que ves en Instagram:' : 'Lo que no te enseñan:';
+  const la = front ? a*(1-easeOut(prog(t, H0.flip, .2))) : easeOut(prog(t, H0.flip + .25, .25));
+  ctx.save(); ctx.globalAlpha = fade;
+  text(label, CX, 560, {size:56, weight:900, color: front ? C.ink : C.red, align:'center', alpha: la});
+  ctx.save(); ctx.translate(CX, 880 + (1-a)*120); ctx.scale(Math.max(.02, sx) * lerp(.9,1,a), lerp(.9,1,a)); ctx.globalAlpha *= a;
+  shadow(1);
+  if (front) guruPost(0, 0, 720, 520); else suspCard(0, 20, 800, 600);
+  shadow(0); ctx.restore();
+  if (t >= H0.truth) centerText('Vende más una foto que la realidad.', 1375, 64, 900, C.ink, easeOut(prog(t, H0.truth, .3)), 760);
+  ctx.restore();
+  // cierre
+  if (t >= H0.final){
+    const p = easeOut(prog(t, H0.final, .3));
+    centerText('Te lo explico ahora', 860 + (1-p)*30, 96, 900, C.ink, p, 800);
+    const b = Math.abs(Math.sin((t - H0.final)*6))*14, ay = 1040 + b;
+    ctx.save(); ctx.globalAlpha = p; ctx.strokeStyle = C.accent; ctx.lineWidth = 14; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(CX, ay - 40); ctx.lineTo(CX, ay + 40); ctx.moveTo(CX - 28, ay + 14); ctx.lineTo(CX, ay + 42); ctx.lineTo(CX + 28, ay + 14); ctx.stroke(); ctx.restore();
+  }
+}
 function wipe(t){
   const p = easeIO(prog(t, TL.wipe[0], TL.wipe[1] - TL.wipe[0] - .03)); if (p <= 0) return;
   const top = lerp(H + 300, -400, p);
@@ -260,7 +323,7 @@ function wipe(t){
   ctx.moveTo(0, top + 260); ctx.lineTo(W, top); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill(); ctx.restore();
 }
 
-window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600)); await new Promise(r => chartImg.complete ? r() : (chartImg.onload = r)); build(); return true; };
+window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600)); for (const im of [chartImg, suspImg]) await new Promise(r => im.complete ? r() : (im.onload = r)); build(); return true; };
 window.renderFrame = (f) => {
   const t = f / TL.fps;
   background(t);
@@ -291,6 +354,7 @@ window.renderFrame = (f) => {
   inputBar(t, easeOut(prog(t, TL.send + .25, .2)));
   composer(t);
   ctx.restore();
+  hate(t);
   wipe(t);
   if (window.SAFE_OVERLAY){ ctx.save(); ctx.fillStyle = 'rgba(255,0,0,.25)';
     ctx.fillRect(0,0,W,250); ctx.fillRect(0,1500,W,420); ctx.fillRect(0,250,80,1250); ctx.fillRect(900,250,180,1250); ctx.restore(); }

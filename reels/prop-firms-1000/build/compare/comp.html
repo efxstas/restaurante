@@ -1,0 +1,207 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Gurú vs Trader</title>
+<style>
+@font-face{font-family:Archivo;font-weight:100 900;src:url(../../styleframes/fonts/Archivo-latin-var.woff2) format("woff2")}
+html,body{margin:0;background:#ECEDF0}
+canvas{display:block}
+</style></head>
+<body><canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// Clip para insertar sobre el vídeo del creador: situación gurú vs situación trader (mismo tema que el intro).
+const C = { bg:'#ECEDF0', card:'#FFFFFF', ink:'#14161B', accent:'#2B5BFF', onAccent:'#FFFFFF', red:'#E5484D', navy:'#0E1530', muted:'#6B6F78' };
+const W = 1080, H = 1920, L = 80, R = 900, CX = 490, FONT = 'Archivo';
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+
+const clamp = (v,a=0,b=1) => Math.min(b, Math.max(a, v));
+const lerp = (a,b,t) => a + (b-a)*t;
+const easeOut = t => 1 - Math.pow(1-clamp(t),3);
+const easeIO = t => { t = clamp(t); return t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; };
+const back = t => { t = clamp(t); const c=1.9; return 1 + (c+1)*Math.pow(t-1,3) + c*Math.pow(t-1,2); };
+const prog = (t, s, len=.25) => clamp((t-s)/len);
+const hexA = (hex,a) => { const n=parseInt(hex.slice(1),16); return `rgba(${n>>16},${n>>8&255},${n&255},${a})`; };
+const font = (size, weight) => `${weight} ${size}px ${FONT}`;
+const fmt = n => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,'.') + ' €';
+function text(str, x, y, {size=50, weight=600, color=C.ink, align='left', alpha=1}={}){
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.font = font(size, weight);
+  ctx.textAlign = align; ctx.textBaseline = 'alphabetic'; ctx.fillText(str, x, y); ctx.restore();
+}
+function rr(x,y,w,h,r){ ctx.beginPath(); ctx.roundRect(x,y,w,h,r); }
+function shadow(on){ ctx.shadowColor = on ? 'rgba(20,22,27,.12)' : 'transparent'; ctx.shadowBlur = on ? 34 : 0; ctx.shadowOffsetY = on ? 10 : 0; }
+function card(x,y,w,h,{r=32, fill=C.card, alpha=1}={}){ ctx.save(); ctx.globalAlpha *= alpha; rr(x,y,w,h,r); ctx.fillStyle = fill; shadow(1); ctx.fill(); shadow(0); ctx.restore(); }
+function img(src){ const i = new Image(); i.src = src; return i; }
+const IMG = { chart: img('../../assets/chart_nq.png'), trade: img('../../assets/trade_15r.png'),
+  mff: img('../../assets/cert_mff_2000.png'), lucid: img('../../assets/cert_lucid_3936.png') };
+function drawImg(im, cx, cy, w, {alpha=1, rot=0, r=20, border=0}={}){
+  const h = w * im.naturalHeight / im.naturalWidth;
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.translate(cx, cy); ctx.rotate(rot);
+  shadow(1); rr(-w/2, -h/2, w, h, r); ctx.fillStyle = C.card; ctx.fill(); shadow(0);
+  ctx.save(); rr(-w/2, -h/2, w, h, r); ctx.clip(); ctx.drawImage(im, -w/2, -h/2, w, h); ctx.restore();
+  if (border){ rr(-w/2, -h/2, w, h, r); ctx.strokeStyle = C.card; ctx.lineWidth = border; ctx.stroke(); }
+  ctx.restore(); return h;
+}
+
+let TL;
+function background(t){
+  ctx.fillStyle = C.bg; ctx.fillRect(0,0,W,H);
+  ctx.save(); ctx.strokeStyle = hexA(C.ink,.035); ctx.lineWidth = 2;
+  for (let x=80; x<W; x+=120){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=10; y<H; y+=120){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  ctx.restore();
+  const im = IMG.chart, h = 1560, w = im.naturalWidth * h / im.naturalHeight;
+  const p = clamp(t / TL.duration), x = lerp(-w*.15, W - w + 40, p);
+  ctx.save(); ctx.globalAlpha = .16; ctx.drawImage(im, x, 220, w, h); ctx.restore();
+}
+
+// cabecera de situación
+function header(t, s0, n, name, color){
+  const a = easeOut(prog(t, s0, .3)), dy = (1-a)*30;
+  rr(L, 280 + dy, 250, 60, 30); ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = color; ctx.fill(); ctx.restore();
+  text(`SITUACIÓN ${n}`, L + 125, 322 + dy, {size:30, weight:800, color:C.onAccent, align:'center', alpha:a});
+  text(name, L, 450 + dy, {size:110, weight:900, color, alpha:a});
+}
+function sub(str, y, t, s0, {size=50, weight=700, color=C.ink}={}){
+  const a = easeOut(prog(t, s0, .3));
+  text(str, L, y + (1-a)*20, {size, weight, color, alpha:a});
+}
+
+// rejilla de 10 cuentas
+function tiles(t, s0, {burn=null, keep=4, y0=640}={}){
+  const tw = 152, th = 150, gap = (R - L - tw*5)/4;
+  for (let k=0;k<10;k++){
+    const col = k%5, row = Math.floor(k/5), x = L + col*(tw+gap), y = y0 + row*(th+26);
+    const p = back(prog(t, s0 + k*.05, .3)); if (p <= 0) continue;
+    const burnt = burn !== null && k !== keep && t >= burn + order(k)*.2;
+    const bp = burnt ? easeOut(prog(t, burn + order(k)*.2, .2)) : 0;
+    const survived = burn !== null && k === keep && t >= burn + 9*.2 + .1;
+    ctx.save(); ctx.translate(x + tw/2, y + th/2); ctx.scale(clamp(p), clamp(p));
+    shadow(1); rr(-tw/2, -th/2, tw, th, 22);
+    ctx.fillStyle = survived ? C.accent : bp > 0 ? `rgba(229,72,77,${.12 + .88*bp})` : C.card; ctx.fill(); shadow(0);
+    const fg = survived || bp > .5 ? C.onAccent : C.ink;
+    if (!survived && bp <= 0) text(`#${k+1}`, -tw/2 + 18, -th/2 + 40, {size:28, weight:700, color:fg, alpha:.7});
+    text('100 €', 0, 30, {size:40, weight:900, color:fg, align:'center'});
+    if (bp > 0){ ctx.strokeStyle = C.onAccent; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.globalAlpha = bp;
+      ctx.beginPath(); ctx.moveTo(-34, 50); ctx.lineTo(34, 50 + 0); ctx.stroke();
+      text('QUEMADA', 0, -th/2 + 40 + 0, {size:24, weight:900, color:C.onAccent, align:'center'}); }
+    if (survived) text('PASA', 0, -th/2 + 40, {size:24, weight:900, color:C.onAccent, align:'center'});
+    ctx.restore();
+  }
+}
+const ORDER = [2,7,0,9,4,6,1,8,5,3];             // orden en que se queman (la #4 sobrevive)
+const order = k => ORDER.indexOf(k) - (ORDER.indexOf(k) > ORDER.indexOf(3) ? 1 : 0);
+
+function counter(label, value, y, t, s0, color=C.ink){
+  const a = easeOut(prog(t, s0, .3));
+  text(label, L, y, {size:40, weight:700, color:C.muted, alpha:a});
+  text(value, R, y, {size:52, weight:900, color, align:'right', alpha:a});
+}
+
+function ledger(t, s0, rows, y0, accent){
+  const a = easeOut(prog(t, s0, .3));
+  card(L, y0 + (1-a)*40, R - L, 120 + rows.length*96, {alpha:a});
+  rows.forEach((r, i) => {
+    const p = easeOut(prog(t, s0 + .25 + i*.32, .25)), y = y0 + 110 + i*96 + (1-a)*40;
+    const last = i === rows.length - 1;
+    if (last){ ctx.save(); ctx.globalAlpha = p; ctx.fillStyle = hexA(accent,.1); ctx.fillRect(L + 24, y - 64, R - L - 48, 90); ctx.restore(); }
+    text(r[0], L + 44, y, {size: last ? 50 : 44, weight: last ? 900 : 700, color: last ? C.ink : C.muted, alpha:p});
+    text(r[1], R - 44, y, {size: last ? 64 : 50, weight:900, color: r[2] || C.ink, align:'right', alpha:p});
+  });
+}
+
+function guruPost(cx, cy, w, h, a, s){
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(cx, cy); ctx.rotate(.04); ctx.scale(s, s);
+  shadow(1); rr(-w/2, -h/2, w, h, 32); ctx.fillStyle = C.navy; ctx.fill(); shadow(0);
+  ctx.strokeStyle = C.accent; ctx.lineWidth = 7; rr(-w/2+18, -h/2+18, w-36, h-36, 22); ctx.stroke();
+  text('PAYOUT APROBADO', 0, -h/2 + 78, {size:38, weight:800, color:'#9FB2FF', align:'center'});
+  text('+1.500 €', 0, 52, {size:112, weight:900, color:'#FFFFFF', align:'center'});
+  text('"Esto funciona 🔥"', 0, h/2 - 40, {size:34, weight:600, color:'#FFFFFF', align:'center', alpha:.8});
+  ctx.restore();
+}
+
+// ── secciones ────────────────────────────────────────────────────────────────
+function guru(t){
+  const g = TL.guru, out = 1 - easeOut(prog(t, g.end - .3, .3));
+  ctx.save(); ctx.globalAlpha = out;
+  header(t, g.start, 1, 'EL GURÚ', C.red);
+  if (t < g.ledger){
+    sub('Compra 10 cuentas', 560, t, g.tiles);
+    const fade = 1 - easeOut(prog(t, g.ledger - .3, .3));
+    ctx.save(); ctx.globalAlpha *= fade;
+    tiles(t, g.tiles, {burn: g.burn, keep: 3});
+    counter('Invertido', '−1.000 €', 1060, t, g.tiles + .4, C.red);
+    if (t >= g.burn){ ctx.save(); ctx.globalAlpha *= 1 - easeOut(prog(t, g.payout - .15, .2)); sub('…y opera a lo loco para pasar rápido', 1150, t, g.burn, {size:42, weight:700, color:C.red}); ctx.restore(); }
+    if (t >= g.payout){
+      const p = back(prog(t, g.payout, .35));
+      guruPost(CX, 1270, 640, 300, clamp(p), lerp(.7, 1, clamp(p)));
+      text('…y lo enseña en redes', CX, 1480, {size:38, weight:800, color:C.ink, align:'center', alpha: easeOut(prog(t, g.payout + .5, .3))});
+    }
+    ctx.restore();
+  } else {
+    sub('La realidad:', 560, t, g.ledger, {size:56, weight:900});
+    ledger(t, g.ledger + .1, [['Invertido','−1.000 €',C.red],['Payouts','+1.500 €'],['Neto', g.net],['ROI', g.roi, C.red]], 620, C.red);
+    sub('9 de 10 cuentas quemadas', 1250, t, g.ledger + 1.6, {size:44, weight:800, color:C.red});
+  }
+  ctx.restore();
+}
+
+function trader(t){
+  const s = TL.trader, out = 1 - easeOut(prog(t, s.end - .3, .3));
+  ctx.save(); ctx.globalAlpha = out;
+  header(t, s.start, 2, 'EL TRADER', C.accent);
+  if (t < s.trade){
+    sub('Mismas 10 cuentas, mismo dinero', 560, t, s.tiles);
+    tiles(t, s.tiles, {});
+    counter('Invertido', '−1.000 €', 1060, t, s.tiles + .4, C.red);
+  } else if (t < s.certs){
+    const a = easeOut(prog(t, s.trade, .35));
+    sub('Pero opera con un plan', 560, t, s.trade);
+    text('TRADE REAL', L, 650, {size:30, weight:800, color:C.accent, alpha:a});
+    drawImg(IMG.trade, CX, 1010 + (1-a)*60, 640, {alpha:a, r:24});
+    const b = easeOut(prog(t, s.trade + .6, .3));
+    rr(L, 1400, R - L, 90, 45); ctx.save(); ctx.globalAlpha = b; ctx.fillStyle = C.accent; ctx.fill(); ctx.restore();
+    text('Riesgo fijo · R:R 1,5 · sin forzar', CX, 1458, {size:40, weight:800, color:C.onAccent, align:'center', alpha:b});
+  } else if (t < s.ledger){
+    sub('Y cobra de verdad', 560, t, s.certs);
+    text('MIS PAYOUTS REALES', L, 650, {size:30, weight:800, color:C.accent, alpha: easeOut(prog(t, s.certs, .3))});
+    const p1 = back(prog(t, s.certs + .2, .4)), p2 = back(prog(t, s.certs + .8, .4));
+    if (p1 > 0) drawImg(IMG.mff, CX - 30, 860 + (1-clamp(p1))*80, 700, {alpha:clamp(p1), rot:-.05, r:18, border:8});
+    if (p2 > 0) drawImg(IMG.lucid, CX + 20, 1190 + (1-clamp(p2))*80, 700, {alpha:clamp(p2), rot:.04, r:18, border:8});
+    const tot = easeOut(prog(t, s.certs + 1.6, .3));
+    rr(L, 1405, R - L, 90, 45); ctx.save(); ctx.globalAlpha = tot; ctx.fillStyle = C.ink; ctx.fill(); ctx.restore();
+    text('2.000 $ + 3.936 $ en payouts', CX, 1463, {size:40, weight:800, color:C.onAccent, align:'center', alpha:tot});
+  } else {
+    sub('Con los mismos 1.000 €:', 560, t, s.ledger, {size:56, weight:900});
+    ledger(t, s.ledger + .1, [['Invertido','−1.000 €',C.red],['Payouts', s.payouts],['Neto', s.net],['ROI', s.roi, C.accent]], 620, C.accent);
+  }
+  ctx.restore();
+}
+
+function final(t){
+  const f = TL.final.start, a = easeOut(prog(t, f, .3));
+  text('MISMO PRESUPUESTO', L, 420, {size:44, weight:800, color:C.muted, alpha:a});
+  text('Distinto enfoque.', L, 520, {size:84, weight:900, alpha:a});
+  const rows = [['GURÚ', TL.guru.roi, C.red, .14], ['TRADER', TL.trader.roi, C.accent, 1]];
+  rows.forEach((r, i) => {
+    const y = 760 + i*300, p = easeIO(prog(t, f + .5 + i*.5, .8));
+    text(r[0], L, y - 30, {size:48, weight:900, color:r[2], alpha: easeOut(prog(t, f + .4 + i*.5, .3))});
+    rr(L, y, R - L, 110, 26); ctx.fillStyle = hexA(C.ink,.07); ctx.fill();
+    const w = Math.max(60, (R - L) * r[3] * p);
+    rr(L, y, w, 110, 26); ctx.fillStyle = r[2]; ctx.fill();
+    const lp = easeOut(prog(t, f + 1.1 + i*.5, .3));
+    if (r[3] > .5) text(r[1], L + w - 30, y + 76, {size:56, weight:900, color:C.onAccent, align:'right', alpha:lp});
+    else text(r[1], L + w + 24, y + 76, {size:56, weight:900, color:r[2], alpha:lp});
+  });
+  const q = easeOut(prog(t, f + 2.3, .4));
+  text('ROI neto sobre 1.000 € invertidos', CX, 1400, {size:36, weight:600, color:C.muted, align:'center', alpha:q});
+}
+
+window.load = async (timeline) => { TL = timeline; await document.fonts.load(font(100,900)); await document.fonts.load(font(100,600));
+  for (const im of Object.values(IMG)) await new Promise(r => im.complete ? r() : (im.onload = r)); return true; };
+window.renderFrame = (f) => {
+  const t = f / TL.fps;
+  background(t);
+  if (t < TL.trader.start) guru(t); else if (t < TL.final.start) trader(t); else final(t);
+  if (window.SAFE_OVERLAY){ ctx.save(); ctx.fillStyle = 'rgba(255,0,0,.25)';
+    ctx.fillRect(0,0,W,250); ctx.fillRect(0,1500,W,420); ctx.fillRect(0,250,80,1250); ctx.fillRect(900,250,180,1250); ctx.restore(); }
+  let id = 'x'; for (const s of TL.shots) if (t >= s.start) id = s.id; return id;
+};
+</script></body></html>

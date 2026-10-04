@@ -1,0 +1,20 @@
+{
+  "fps": 30,
+  "duration": 23.0,
+  "guru":   { "start": 0.0, "tiles": 0.6, "burn": 2.4, "payout": 5.0, "ledger": 6.8, "end": 9.5,
+              "invested": 1000, "payouts": "+1.500 €", "net": "+500 €", "roi": "+50 %" },
+  "trader": { "start": 9.5, "tiles": 10.1, "trade": 11.2, "certs": 13.4, "ledger": 16.2, "end": 19.0,
+              "payouts": "+3.000–4.000 €", "net": "+2.000–3.000 €", "roi": "+200–300 %" },
+  "final":  { "start": 19.0 },
+  "shots": [
+    { "id": "guru_title", "start": 0.0, "end": 2.4 },
+    { "id": "guru_burn", "start": 2.4, "end": 5.0 },
+    { "id": "guru_payout", "start": 5.0, "end": 6.8 },
+    { "id": "guru_ledger", "start": 6.8, "end": 9.5 },
+    { "id": "trader_title", "start": 9.5, "end": 11.2 },
+    { "id": "trader_trade", "start": 11.2, "end": 13.4 },
+    { "id": "trader_certs", "start": 13.4, "end": 16.2 },
+    { "id": "trader_ledger", "start": 16.2, "end": 19.0 },
+    { "id": "final", "start": 19.0, "end": 23.0 }
+  ]
+}
